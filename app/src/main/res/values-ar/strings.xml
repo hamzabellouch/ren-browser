@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="press_again_to_go_home">اضغط مجدداً للعودة إلى الصفحة الرئيسية</string>
+    <string name="open_in_new_tab">فتح في علامة تبويب جديدة</string>
+    <string name="open_in_incognito_tab">فتح في علامة تبويب متخفية</string>
+    <string name="open_in_background">فتح في الخلفية</string>
+    <string name="preview_page">معاينة الصفحة</string>
+    <string name="copy_link_address">نسخ عنوان الرابط</string>
+    <string name="copy_link_text">نسخ نص الرابط</string>
+    <string name="download_link">تنزيل الرابط</string>
+    <string name="share_link">مشاركة الرابط</string>
+    <string name="open_in_reading_mode">فتح في وضع القراءة</string>
+    <string name="open_image_in_new_tab">فتح الصورة في علامة تبويب جديدة</string>
+    <string name="download_image">تنزيل الصورة</string>
+    <string name="copy_image_address">نسخ رابط الصورة</string>
+    <string name="share_image">مشاركة الصورة</string>
+    <string name="copy">نسخ</string>
+    <string name="select_all">تحديد الكل</string>
+    <string name="share">مشاركة</string>
+    <string name="web_search">بحث في الويب</string>
+    <string name="copied_to_clipboard">تم النسخ إلى الحافظة</string>
+    <string name="link_copied_toast">تم نسخ عنوان الرابط</string>
+    <string name="link_text_copied_toast">تم نسخ نص الرابط</string>
+    <string name="image_link_copied_toast">تم نسخ رابط الصورة</string>
+    <string name="tab_opened_in_background">تم الفتح في علامة تبويب جديدة في الخلفية</string>
+    <string name="open_in_tab">فتح في علامة تبويب</string>
+    <string name="image">صورة</string>
+    <string name="link">رابط</string>
+</resources>

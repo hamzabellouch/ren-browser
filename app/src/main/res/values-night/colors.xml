@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_black">#0C100D</color>
+    <color name="bg_surface">#131815</color>
+    <color name="bg_surface_card">#1D2520</color>
+    <color name="bg_pill">#232B25</color>
+    <color name="bg_sheet">#1D2520</color>
+    <color name="bg_sheet_handle">#3a3a3c</color>
+    
+    <color name="text_primary">#E2E3E0</color>
+    <color name="text_secondary">#C2C9C2</color>
+    <color name="text_hint">#8C938C</color>
+    
+    <color name="accent_blue">#8AB4F8</color>
+    <color name="accent_blue_bright">#8AB4F8</color>
+    <color name="accent_blue_light">#D2E3FC</color>
+    
+    <color name="icon_inactive">#C2C9C2</color>
+    <color name="icon_active">#8AB4F8</color>
+    <color name="icon_dimmed">#8C938C</color>
+    <color name="icon_danger">#FF8A80</color>
+    
+    <color name="divider_color">#202A36</color>
+    <color name="border_color">#202A36</color>
+    <color name="dot_active">#8AB4F8</color>
+    <color name="dot_inactive">#3A3F3B</color>
+</resources>
