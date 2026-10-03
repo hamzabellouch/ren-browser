@@ -152,47 +152,157 @@ object AdBlockManager {
         getPrefs(context).edit().putBoolean(KEY_ANTI_ADBLOCK_ENABLED, enabled).apply()
     }
 
+    // Built-in high performance ad & tracking domains list (active immediately out of the box)
+    private val BUILTIN_AD_DOMAINS = hashSetOf(
+        // Google Ads & DoubleClick
+        "doubleclick.net", "googleads.g.doubleclick.net", "pagead2.googlesyndication.com",
+        "adservice.google.com", "googlesyndication.com", "adclick.g.doubleclick.net",
+        "partnerad.l.doubleclick.net", "securepubads.g.doubleclick.net", "tpc.googlesyndication.com",
+        // Major Global Ad & Tracker Networks
+        "criteo.com", "criteo.net", "outbrain.com", "taboola.com", "adnxs.com", "appnexus.com",
+        "rubiconproject.com", "amazon-adsystem.com", "aax.amazon-adsystem.com",
+        "popads.net", "popcash.net", "propellerads.com", "adsterra.com", "adform.net",
+        "casalemedia.com", "openx.net", "inmobi.com", "moatads.com", "adcolony.com",
+        "unityads.unity3d.com", "applovin.com", "ironsrc.com", "vungle.com", "chartboost.com",
+        "fyber.com", "admob.com", "advertising.com", "adroll.com", "bidswitch.net",
+        "smartadserver.com", "scorecardresearch.com", "zedo.com", "trafficfactory.biz",
+        "exoclick.com", "juicyads.com", "ero-advertising.com", "adtech.de", "exponential.com",
+        "yieldmo.com", "sovrn.com", "triplelift.com", "sharethrough.com", "mgid.com",
+        "revcontent.com", "adblade.com", "adtrue.com", "adthrive.com", "mediavine.com",
+        "monetag.com", "admaven.com", "hilltopads.net", "clickadu.com", "richaudience.com",
+        "teads.tv", "smaato.net", "undertone.com", "gumgum.com", "conversantmedia.com",
+        "adkernel.com", "contextweb.com", "e-planning.net", "trafficjunky.com", "adsupply.com",
+        "adreactor.com", "liveadvert.com", "adtilt.com", "chitika.net", "clicksor.com",
+        "adcash.com", "yieldoptimizer.com", "yieldlab.net", "indexexchange.com",
+        "media.net", "bidvertiser.com", "infolinks.com", "adpushup.com", "admixer.net",
+        "pubmatic.com", "sonobi.com", "quantcount.com", "quantserve.com",
+        // Analytics & Tracking used for ad delivery
+        "google-analytics.com", "ssl.google-analytics.com", "googletagmanager.com",
+        "googletagservices.com", "hotjar.com", "mouseflow.com", "clarity.ms"
+    )
+
+    private val BUILTIN_AD_KEYWORDS = listOf(
+        "/pagead/",
+        "/ads/ad_",
+        "/adserver/",
+        "/adsystem/",
+        "/show_ads.js",
+        "/show_ads_impl.js",
+        "adsbygoogle.js",
+        "google_ads.js",
+        "/adframe.",
+        "/prebid.js",
+        "/prebid-",
+        "/ad_banner",
+        "/ad_refresher",
+        "/popads.",
+        "/adsterra.",
+        "/outbrain.js",
+        "/taboola.js"
+    )
+
+    fun initAtStartup(context: Context) {
+        loadActiveRules(context)
+    }
+
+    /**
+     * Determines if a request is specifically an Anti-Adblock detector script trap (e.g. FuckAdBlock, BlockAdBlock),
+     * rather than an actual ad delivery script.
+     * Actual ad scripts MUST be blocked completely (dropped), while only honeypot trap scripts receive the bait stub.
+     */
     fun isBaitScriptRequest(url: String): Boolean {
         val lower = url.lowercase(Locale.ROOT)
-        return lower.endsWith(".js") ||
-               lower.contains(".js?") ||
-               lower.contains("/ads.") ||
-               lower.contains("/pagead") ||
-               lower.contains("/adframe") ||
-               lower.contains("/show_ads") ||
-               lower.contains("/prebid") ||
-               lower.contains("adsbygoogle") ||
-               lower.contains("adblock") ||
-               lower.contains("sponsor") ||
-               lower.contains("advert")
+        val path = try { Uri.parse(url).path?.lowercase(Locale.ROOT) ?: lower } catch (_: Exception) { lower }
+        val filename = path.substringAfterLast('/')
+
+        return filename == "fuckadblock.js" ||
+               filename == "blockadblock.js" ||
+               filename == "adblock-detector.js" ||
+               filename == "detect-adblock.js" ||
+               filename == "adblock-checker.js" ||
+               filename == "adblocker.js" ||
+               filename == "prebid-ads.js" ||
+               filename == "ads-prebid.js" ||
+               filename == "ads-check.js" ||
+               filename == "ad-check.js" ||
+               lower.contains("/fuckadblock") ||
+               lower.contains("/blockadblock") ||
+               lower.contains("/adblock-detector")
     }
 
     fun getBaitScriptResponse(): String {
         return """
             (function() {
                 try {
-                    window.canRunAds = true;
-                    window.isAdBlocked = false;
-                    window.adblock = false;
-                    window.google_ad_client = true;
-                    window.adsbygoogle = window.adsbygoogle || [];
-                    window.adsbygoogle.loaded = true;
-                    window.adsbygoogle.push = function() { return 1; };
-                    window.ga = window.ga || function() {};
-                    window.gtag = window.gtag || function() {};
-                    window.AdBlocker = { isDetected: false };
                     var noop = {
                         check: function() { return true; },
-                        on: function(flag, fn) { if (!flag && typeof fn === 'function') { try { fn(); } catch(e) {} } return this; },
+                        on: function(flag, fn) { return this; },
                         onDetected: function() { return this; },
                         onNotDetected: function(fn) { if (typeof fn === 'function') { try { fn(); } catch(e) {} } return this; },
-                        setOption: function() { return this; }
+                        setOption: function() { return this; },
+                        clearEvent: function() { return this; }
                     };
                     window.BlockAdBlock = function() { return noop; };
                     window.blockAdBlock = noop;
                     window.FuckAdBlock = function() { return noop; };
                     window.fuckAdBlock = noop;
                     window.SnackAdBlock = noop;
+                    window.AdBlocker = { isDetected: false };
+                } catch(e) {}
+            })();
+        """.trimIndent()
+    }
+
+    fun getCosmeticHidingScript(): String {
+        return """
+            (function() {
+                try {
+                    var styleId = 'ren-adblock-cosmetic-style';
+                    if (!document.getElementById(styleId)) {
+                        var style = document.createElement('style');
+                        style.id = styleId;
+                        style.type = 'text/css';
+                        style.innerHTML = 'ins.adsbygoogle, .adsbygoogle, .ad-banner, .ad-container, .ad-box, .advertisement, .ad-slot, .ad-wrapper, [id^="google_ads_"], [id^="div-gpt-ad"], [id^="ad-slot-"], [class*="ad_slot"], [class*="ad-slot"], [class*="ad-banner"], [id*="ad-banner"], [class*="ad-container"], [id*="ad-container"], [class*="ad-wrapper"], [id*="ad-wrapper"], .outbrain_widget, .trc_related_container, .taboola-placeholder, .taboola, .outbrain, #sponsored-posts, .sponsored-content, [data-ad-unit], [data-ad-client], [data-ad-slot], iframe[src*="doubleclick.net"], iframe[src*="googlesyndication.com"], iframe[src*="adnxs.com"], iframe[src*="criteo.com"], iframe[src*="rubiconproject.com"], iframe[src*="amazon-adsystem.com"], iframe[src*="popads.net"], iframe[src*="propellerads.com"], iframe[src*="adsterra.com"], div[class*="adsbox"], div[class*="ad-placement"], div[id*="ad-placement"], div[class*="dfp-ad"], div[id*="dfp-ad"] { display: none !important; visibility: hidden !important; height: 0 !important; max-height: 0 !important; width: 0 !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; border: none !important; pointer-events: none !important; }';
+                        (document.head || document.documentElement).appendChild(style);
+                    }
+
+                    var removeAdElements = function() {
+                        try {
+                            var adSelectors = [
+                                'ins.adsbygoogle',
+                                'iframe[src*="doubleclick"]',
+                                'iframe[src*="googlesyndication"]',
+                                'iframe[src*="adnxs"]',
+                                'iframe[src*="criteo"]',
+                                'iframe[src*="amazon-adsystem"]',
+                                'iframe[src*="popads"]',
+                                'iframe[src*="propeller"]',
+                                'iframe[src*="adsterra"]',
+                                'div[id^="google_ads_"]',
+                                'div[id^="div-gpt-ad"]',
+                                'div[class*="ad-placement"]',
+                                'div[class*="adsbox"]'
+                            ];
+                            var els = document.querySelectorAll(adSelectors.join(','));
+                            for (var i = 0; i < els.length; i++) {
+                                els[i].style.setProperty('display', 'none', 'important');
+                                els[i].style.setProperty('visibility', 'hidden', 'important');
+                            }
+                        } catch(e) {}
+                    };
+
+                    if (document.readyState === 'loading') {
+                        document.addEventListener('DOMContentLoaded', removeAdElements);
+                    } else {
+                        removeAdElements();
+                    }
+
+                    if (window.MutationObserver) {
+                        var observer = new MutationObserver(function() {
+                            removeAdElements();
+                        });
+                        observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+                    }
                 } catch(e) {}
             })();
         """.trimIndent()
@@ -202,37 +312,27 @@ object AdBlockManager {
         return """
             (function() {
                 try {
-                    window.canRunAds = true;
-                    window.isAdBlocked = false;
-                    window.adblock = false;
-                    window.google_ad_client = true;
-                    if (!window.adsbygoogle) {
-                        window.adsbygoogle = [];
-                        window.adsbygoogle.loaded = true;
-                        window.adsbygoogle.push = function() { return 1; };
-                    }
-                    if (!window.ga) window.ga = function() {};
-                    if (!window.gtag) window.gtag = function() {};
-
                     var noop = {
                         check: function() { return true; },
-                        on: function(flag, fn) { if (!flag && typeof fn === 'function') { try { fn(); } catch(e) {} } return this; },
+                        on: function(flag, fn) { return this; },
                         onDetected: function() { return this; },
                         onNotDetected: function(fn) { if (typeof fn === 'function') { try { fn(); } catch(e) {} } return this; },
-                        setOption: function() { return this; }
+                        setOption: function() { return this; },
+                        clearEvent: function() { return this; }
                     };
                     window.BlockAdBlock = function() { return noop; };
                     window.blockAdBlock = noop;
                     window.FuckAdBlock = function() { return noop; };
                     window.fuckAdBlock = noop;
                     window.SnackAdBlock = noop;
+                    window.AdBlocker = { isDetected: false };
 
                     var restoreScrollAndCleanModals = function() {
                         try {
-                            if (document.documentElement) {
+                            if (document.documentElement && document.documentElement.style.overflow === 'hidden') {
                                 document.documentElement.style.setProperty('overflow', 'auto', 'important');
                             }
-                            if (document.body) {
+                            if (document.body && document.body.style.overflow === 'hidden') {
                                 document.body.style.setProperty('overflow', 'auto', 'important');
                             }
                             var selectors = [
@@ -268,7 +368,7 @@ object AdBlockManager {
                     }
                     window.addEventListener('load', restoreScrollAndCleanModals);
                     var cleanInterval = setInterval(restoreScrollAndCleanModals, 1000);
-                    setTimeout(function() { clearInterval(cleanInterval); }, 8000);
+                    setTimeout(function() { clearInterval(cleanInterval); }, 6000);
                 } catch(e) {}
             })();
         """.trimIndent()
@@ -425,9 +525,12 @@ object AdBlockManager {
             val newKeywords = mutableListOf<String>()
 
             val dir = getRulesDir(context)
+            var hasAnyRuleFile = false
+
             for (sub in enabledSubs) {
                 val file = java.io.File(dir, "sub_${sub.id}.txt")
-                if (file.exists()) {
+                if (file.exists() && file.length() > 0) {
+                    hasAnyRuleFile = true
                     try {
                         file.forEachLine { line ->
                             val rule = line.trim().lowercase(Locale.ROOT)
@@ -455,6 +558,56 @@ object AdBlockManager {
             subKeywords.clear()
             subKeywords.addAll(newKeywords)
             isRulesLoaded = true
+
+            // If this is the initial launch and no subscription files have been downloaded yet,
+            // automatically download the top enabled presets (e.g. EasyList) in the background.
+            if (!hasAnyRuleFile) {
+                val primarySubs = enabledSubs.take(3)
+                var anyDownloaded = false
+                val currentList = getSubscriptions(context).toMutableList()
+
+                for (sub in primarySubs) {
+                    val count = downloadAndSaveSubscription(context, sub)
+                    if (count > 0) {
+                        anyDownloaded = true
+                        val idx = currentList.indexOfFirst { it.id == sub.id }
+                        if (idx >= 0) {
+                            currentList[idx].filterCount = count
+                            currentList[idx].lastUpdatedTime = System.currentTimeMillis()
+                        }
+                    }
+                }
+                if (anyDownloaded) {
+                    saveSubscriptions(context, currentList)
+                    // Reload the newly downloaded rules into memory sets
+                    val updatedDomains = mutableSetOf<String>()
+                    val updatedExacts = mutableSetOf<String>()
+                    val updatedKeywords = mutableListOf<String>()
+                    for (sub in getSubscriptions(context).filter { it.isEnabled }) {
+                        val file = java.io.File(dir, "sub_${sub.id}.txt")
+                        if (file.exists()) {
+                            try {
+                                file.forEachLine { line ->
+                                    val rule = line.trim().lowercase(Locale.ROOT)
+                                    if (rule.isNotEmpty() && !rule.startsWith("!") && !rule.startsWith("[")) {
+                                        if (rule.startsWith("||")) {
+                                            val d = rule.substring(2).trimEnd('^')
+                                            if (d.isNotEmpty()) updatedDomains.add(d)
+                                        } else if (rule.startsWith("|") && rule.endsWith("|") && rule.length > 2) {
+                                            updatedExacts.add(rule.substring(1, rule.length - 1))
+                                        } else if (!rule.contains("##") && !rule.contains("#?#")) {
+                                            updatedKeywords.add(rule)
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    subBlockedDomains.addAll(updatedDomains)
+                    subExactUrls.addAll(updatedExacts)
+                    subKeywords.addAll(updatedKeywords)
+                }
+            }
         }
     }
 
@@ -611,7 +764,7 @@ object AdBlockManager {
 
     fun shouldBlock(context: Context, url: String): Boolean {
         if (!isAdBlockEnabled(context)) return false
-        if (url.startsWith("about:") || url.startsWith("file:") || url.startsWith("chrome:") || url.startsWith("javascript:")) return false
+        if (url.startsWith("about:") || url.startsWith("file:") || url.startsWith("chrome:") || url.startsWith("javascript:") || url.startsWith("data:")) return false
 
         val lowerUrl = url.lowercase(Locale.ROOT)
         val host = try {
@@ -631,7 +784,7 @@ object AdBlockManager {
                 // Check standard Adblock filter formats
                 if (rule.startsWith("||")) {
                     val domainRule = rule.substring(2).trimEnd('^')
-                    if (host.contains(domainRule) || lowerUrl.contains(domainRule)) {
+                    if (domainRule.isNotEmpty() && (host == domainRule || host.endsWith(".$domainRule") || lowerUrl.contains(domainRule))) {
                         recordBlockedAd(context)
                         return true
                     }
@@ -648,7 +801,32 @@ object AdBlockManager {
             }
         }
 
-        // 3. Subscriptions check
+        // 2. Built-in fast domains check
+        if (host.isNotEmpty()) {
+            var currentHost = host
+            while (currentHost.isNotEmpty()) {
+                if (BUILTIN_AD_DOMAINS.contains(currentHost)) {
+                    recordBlockedAd(context)
+                    return true
+                }
+                val dotIdx = currentHost.indexOf('.')
+                if (dotIdx in 0 until currentHost.length - 1) {
+                    currentHost = currentHost.substring(dotIdx + 1)
+                } else {
+                    break
+                }
+            }
+        }
+
+        // 3. Built-in fast keywords check
+        for (kw in BUILTIN_AD_KEYWORDS) {
+            if (lowerUrl.contains(kw)) {
+                recordBlockedAd(context)
+                return true
+            }
+        }
+
+        // 4. Subscriptions check
         if (!isRulesLoaded) {
             loadActiveRules(context)
         }

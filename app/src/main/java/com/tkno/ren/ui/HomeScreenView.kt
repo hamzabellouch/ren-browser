@@ -102,6 +102,7 @@ import androidx.compose.ui.unit.sp
 import com.tkno.ren.R
 import com.tkno.ren.util.SearchEngine
 import com.tkno.ren.util.SearchEngineManager
+import com.tkno.ren.util.SearchSuggestionManager
 import java.net.URI
 import kotlin.math.roundToInt
 
@@ -283,6 +284,7 @@ fun HomeScreenView(
     var recentShortcuts by remember { mutableStateOf<List<ShortcutItem>>(emptyList()) }
     var showAddShortcutDialog by remember { mutableStateOf(false) }
     var shortcutToDelete by remember { mutableStateOf<ShortcutItem?>(null) }
+    var searchSuggestions by remember { mutableStateOf<List<String>>(emptyList()) }
 
     // Screen dimensions
     val screenWidthDp = configuration.screenWidthDp.dp
@@ -294,6 +296,17 @@ fun HomeScreenView(
 
     var bubbleDragX by remember { mutableFloatStateOf(initialBubbleXPx) }
     var bubbleDragY by remember { mutableFloatStateOf(0f) }
+
+    // Query real-time search suggestions when typing
+    LaunchedEffect(searchTextFieldValue.text, isSearchFocused, selectedSearchEngine) {
+        val query = searchTextFieldValue.text.trim()
+        if (isSearchFocused && query.length >= 2 && !query.startsWith("http://", ignoreCase = true) && !query.startsWith("https://", ignoreCase = true)) {
+            val suggestions = SearchSuggestionManager.getSuggestions(context, query, selectedSearchEngine.id)
+            searchSuggestions = suggestions
+        } else {
+            searchSuggestions = emptyList()
+        }
+    }
 
     // Sync searchTextFieldValue with currentUrl when browsing URL changes
     LaunchedEffect(currentUrl, isBrowsing) {
@@ -757,6 +770,7 @@ fun HomeScreenView(
                     .fillMaxHeight()
                     .pointerInput(isFloatingBubbleMode) {
                         if (!isFloatingBubbleMode) return@pointerInput
+                        val touchSlop = viewConfiguration.touchSlop
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
                             var isDrag = false
@@ -776,7 +790,7 @@ fun HomeScreenView(
                                 val dragY = change.position.y - change.previousPosition.y
                                 totalMovement += kotlin.math.abs(dragX) + kotlin.math.abs(dragY)
 
-                                if (totalMovement > 6f) {
+                                if (totalMovement > touchSlop) {
                                     isDrag = true
                                     change.consume()
                                     val minX = with(density) { 8.dp.toPx() }
@@ -844,6 +858,7 @@ fun HomeScreenView(
                                 .size(if (bubbleProgress > 0.01f) containerHeight else 46.dp)
                                 .clip(CircleShape)
                                 .clickable(
+                                    enabled = !isFloatingBubbleMode,
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null
                                 ) {
@@ -1092,6 +1107,80 @@ fun HomeScreenView(
                                 .size(24.dp)
                                 .rotate(arrowRotation)
                         )
+                    }
+                }
+            }
+        }
+
+        // Search Suggestions Overlay Dropdown
+        val isShowingSuggestions = isSearchFocused && searchSuggestions.isNotEmpty()
+        AnimatedVisibility(
+            visible = isShowingSuggestions,
+            enter = fadeIn(tween(180)) + expandVertically(tween(220, easing = FastOutSlowInEasing)),
+            exit = fadeOut(tween(150)) + shrinkVertically(tween(180, easing = FastOutSlowInEasing)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .offset {
+                    val yPos = if (isBrowsing) {
+                        (browsingTargetY - 8.dp).toPx() - (searchSuggestions.size.coerceAtMost(5) * 44.dp.toPx() + 16.dp.toPx())
+                    } else {
+                        (homeTopOffset + barHeight + 8.dp).toPx()
+                    }
+                    IntOffset(0, yPos.roundToInt().coerceAtLeast(0))
+                }
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                shadowElevation = 10.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                ) {
+                    searchSuggestions.take(6).forEach { suggestion ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    focusManager.clearFocus()
+                                    searchTextFieldValue = TextFieldValue(suggestion)
+                                    onSearch(suggestion)
+                                }
+                                .padding(horizontal = 16.dp, vertical = 10.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_search),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = suggestion,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = ArrowForwardIcon,
+                                contentDescription = "Fill suggestion",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clickable {
+                                        searchTextFieldValue = TextFieldValue(suggestion, selection = TextRange(suggestion.length))
+                                    }
+                            )
+                        }
                     }
                 }
             }

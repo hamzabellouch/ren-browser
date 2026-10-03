@@ -49,6 +49,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import com.tkno.ren.model.WebTab
+import com.tkno.ren.ui.BookmarksBottomSheet
+import com.tkno.ren.ui.BookmarksScreen
 import com.tkno.ren.ui.ClearDataDialog
 import com.tkno.ren.ui.DownloadsScreen
 import com.tkno.ren.ui.FindInPageBar
@@ -74,6 +76,7 @@ import com.tkno.ren.ui.theme.RenTheme
 import com.tkno.ren.ui.theme.ThemeManager
 import com.tkno.ren.util.AdBlockManager
 import com.tkno.ren.util.AntiFingerprintManager
+import com.tkno.ren.util.BookmarkManager
 import com.tkno.ren.util.DownloadsManager
 import com.tkno.ren.util.FaviconManager
 import com.tkno.ren.util.HistoryManager
@@ -85,7 +88,13 @@ import com.tkno.ren.util.SiteConfigManager
 import com.tkno.ren.util.TorManager
 import com.tkno.ren.util.TranslationManager
 import com.tkno.ren.util.UserAgentManager
+import com.tkno.ren.util.WarpManager
 import com.tkno.ren.util.WebRtcManager
+import com.tkno.ren.util.TabSessionManager
+import com.tkno.ren.util.SavedTab
+import android.webkit.ValueCallback
+import android.webkit.JsResult
+import android.webkit.JsPromptResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -163,10 +172,37 @@ class MainActivity : AppCompatActivity() {
     private var isSettingsOpen = false
     private var isMenuOpen = false
     private var isDownloadsOpen = false
+    private var isBookmarksOpen = false
     private var isLandscapeForced = false
     private var currentMenuSheet: MenuBottomSheet? = null
     private var currentQrCodeSheet: QrCodeBottomSheet? = null
     private var themePrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+    private val fileChooserLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (fileUploadCallback == null) return@registerForActivityResult
+        var results: Array<Uri>? = null
+        if (result.resultCode == RESULT_OK) {
+            val data = result.data
+            if (data != null) {
+                val dataString = data.dataString
+                val clipData = data.clipData
+                if (clipData != null && clipData.itemCount > 0) {
+                    val uriList = ArrayList<Uri>()
+                    for (i in 0 until clipData.itemCount) {
+                        clipData.getItemAt(i)?.uri?.let { uriList.add(it) }
+                    }
+                    results = uriList.toTypedArray()
+                } else if (!dataString.isNullOrBlank()) {
+                    results = arrayOf(Uri.parse(dataString))
+                }
+            }
+        }
+        fileUploadCallback?.onReceiveValue(results)
+        fileUploadCallback = null
+    }
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -198,6 +234,51 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         if (intent.action == IncognitoNotificationManager.ACTION_CLOSE_INCOGNITO) {
             closeAllIncognitoTabs()
+        } else {
+            handleIncomingIntent(intent)
+        }
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        if (intent == null) return
+        val targetUrl = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.dataString
+            Intent.ACTION_WEB_SEARCH -> {
+                val query = intent.getStringExtra(android.app.SearchManager.QUERY) ?: intent.getStringExtra("query")
+                if (!query.isNullOrBlank()) SearchEngineManager.buildSearchUrl(this, query) else null
+            }
+            Intent.ACTION_SEND -> {
+                if (intent.type == "text/plain") {
+                    intent.getStringExtra(Intent.EXTRA_TEXT)
+                } else null
+            }
+            else -> intent.dataString
+        }
+
+        if (!targetUrl.isNullOrBlank() && targetUrl != "about:blank") {
+            val validUrl = if (targetUrl.startsWith("http://", ignoreCase = true) ||
+                targetUrl.startsWith("https://", ignoreCase = true) ||
+                targetUrl.startsWith("file://", ignoreCase = true) ||
+                targetUrl.startsWith("content://", ignoreCase = true)
+            ) {
+                targetUrl
+            } else if (targetUrl.startsWith("www.", ignoreCase = true) ||
+                (targetUrl.contains(".") && !targetUrl.contains(" "))
+            ) {
+                "https://$targetUrl"
+            } else {
+                SearchEngineManager.buildSearchUrl(this, targetUrl)
+            }
+
+            val activeTab = getActiveTab()
+            if (activeTab != null && (activeTab.url == "about:blank" || !isBrowsingState.value)) {
+                activeTab.url = validUrl
+                activeTab.webView.loadUrl(validUrl)
+                currentUrlState.value = validUrl
+            } else {
+                createNewTab(validUrl, validUrl, switchToTab = true)
+            }
+            showBrowsingScreen(resetTaskbar = false)
         }
     }
 
@@ -206,6 +287,8 @@ class MainActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         ThemeManager.init(this)
         TorManager.initAtStartup(this)
+        WarpManager.initAtStartup(this)
+        AdBlockManager.initAtStartup(this)
         IncognitoNotificationManager.initChannel(this)
         DownloadsManager.ensureNotificationChannel(this)
         checkNotificationPermission()
@@ -224,8 +307,33 @@ class MainActivity : AppCompatActivity() {
         if (intent?.action == IncognitoNotificationManager.ACTION_CLOSE_INCOGNITO) {
             closeAllIncognitoTabs()
         } else {
-            // Open initial tab
-            createNewTab("about:blank", "Blank page")
+            var restored = false
+            if (TabSessionManager.isRestoreTabsOnStartupEnabled(this)) {
+                val savedTabs = TabSessionManager.getSavedOpenTabs(this)
+                val activeSavedId = TabSessionManager.getSavedActiveTabId(this)
+                if (savedTabs.isNotEmpty()) {
+                    for (st in savedTabs) {
+                        createNewTab(
+                            url = st.url,
+                            title = st.title,
+                            isIncognito = false,
+                            isDesktopSite = st.isDesktopSite,
+                            pendingReaderMode = st.isReaderMode,
+                            switchToTab = (st.id == activeSavedId)
+                        )
+                    }
+                    if (getActiveTab() == null && tabs.isNotEmpty()) {
+                        switchTab(tabs.first())
+                    }
+                    restored = true
+                }
+            }
+
+            if (!restored) {
+                createNewTab("about:blank", "Blank page")
+            }
+
+            handleIncomingIntent(intent)
         }
     }
 
@@ -659,7 +767,7 @@ class MainActivity : AppCompatActivity() {
                         onTabSelect = { index ->
                             when (index) {
                                 0 -> {
-                                    val isAnyOverlayOpen = isHistoryVisible || isTabsGridVisible || isSettingsOpen || isMenuOpen || isDownloadsOpen || currentMenuSheet?.isShowing == true || currentQrCodeSheet?.isShowing == true
+                                    val isAnyOverlayOpen = isHistoryVisible || isTabsGridVisible || isSettingsOpen || isMenuOpen || isDownloadsOpen || isBookmarksOpen || currentMenuSheet?.isShowing == true || currentQrCodeSheet?.isShowing == true
                                     if (isAnyOverlayOpen) {
                                         closeAllOverlays()
                                         val activeTab = getActiveTab()
@@ -1166,6 +1274,11 @@ class MainActivity : AppCompatActivity() {
 
                     // Standard web navigation schemes handled natively by WebView engine
                     if (scheme == "http" || scheme == "https") {
+                        if (scheme == "http" && SiteConfigManager.isHttpsOnlyMode(this@MainActivity)) {
+                            val httpsUrl = targetUrl.replaceFirst("http://", "https://", ignoreCase = true)
+                            view.loadUrl(httpsUrl)
+                            return true
+                        }
                         if (DownloadsManager.isDownloadableUrl(targetUrl)) {
                             val guessName = android.webkit.URLUtil.guessFileName(targetUrl, null, null)
                             val pageUrl = view.url
@@ -1274,8 +1387,10 @@ class MainActivity : AppCompatActivity() {
                                     java.io.ByteArrayInputStream(baitCode.toByteArray(Charsets.UTF_8))
                                 )
                             }
+                            val isJs = reqUrl.endsWith(".js") || reqUrl.contains(".js?") || reqUrl.contains("/js/")
+                            val mime = if (isJs) "application/javascript" else "text/plain"
                             return android.webkit.WebResourceResponse(
-                                "text/plain",
+                                mime,
                                 "UTF-8",
                                 java.io.ByteArrayInputStream(ByteArray(0))
                             )
@@ -1306,9 +1421,14 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    if (AdBlockManager.isAdBlockEnabled(this@MainActivity) && AdBlockManager.isAntiAdblockEnabled(this@MainActivity)) {
-                        val antiAdblockScript = AdBlockManager.getAntiAdblockScript()
-                        (view ?: this@apply).evaluateJavascript(antiAdblockScript, null)
+                    if (AdBlockManager.isAdBlockEnabled(this@MainActivity)) {
+                        val cosmeticScript = AdBlockManager.getCosmeticHidingScript()
+                        (view ?: this@apply).evaluateJavascript(cosmeticScript, null)
+
+                        if (AdBlockManager.isAntiAdblockEnabled(this@MainActivity)) {
+                            val antiAdblockScript = AdBlockManager.getAntiAdblockScript()
+                            (view ?: this@apply).evaluateJavascript(antiAdblockScript, null)
+                        }
                     }
 
                     if (WebRtcManager.isWebRtcBlockEnabled(this@MainActivity)) {
@@ -1349,9 +1469,14 @@ class MainActivity : AppCompatActivity() {
                         (view ?: this@apply).evaluateJavascript(desktopPostHook, null)
                     }
 
-                    if (AdBlockManager.isAdBlockEnabled(this@MainActivity) && AdBlockManager.isAntiAdblockEnabled(this@MainActivity)) {
-                        val antiAdblockScript = AdBlockManager.getAntiAdblockScript()
-                        (view ?: this@apply).evaluateJavascript(antiAdblockScript, null)
+                    if (AdBlockManager.isAdBlockEnabled(this@MainActivity)) {
+                        val cosmeticScript = AdBlockManager.getCosmeticHidingScript()
+                        (view ?: this@apply).evaluateJavascript(cosmeticScript, null)
+
+                        if (AdBlockManager.isAntiAdblockEnabled(this@MainActivity)) {
+                            val antiAdblockScript = AdBlockManager.getAntiAdblockScript()
+                            (view ?: this@apply).evaluateJavascript(antiAdblockScript, null)
+                        }
                     }
 
                     if (ScriptManager.isScriptsEnabled(this@MainActivity) && !url.isNullOrBlank()) {
@@ -1421,6 +1546,76 @@ class MainActivity : AppCompatActivity() {
                             captureActiveTabSnapshot()
                         }, 400)
                     }
+                }
+
+                override fun onReceivedHttpAuthRequest(
+                    view: WebView?,
+                    handler: android.webkit.HttpAuthHandler?,
+                    host: String?,
+                    realm: String?
+                ) {
+                    val layout = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        val pad = (16 * resources.displayMetrics.density).toInt()
+                        setPadding(pad, pad / 2, pad, 0)
+                    }
+                    val userInput = EditText(this@MainActivity).apply {
+                        hint = "Username"
+                    }
+                    val passInput = EditText(this@MainActivity).apply {
+                        hint = "Password"
+                        inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                    }
+                    layout.addView(userInput)
+                    layout.addView(passInput)
+
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Authentication: $host")
+                        .setMessage(realm ?: "Sign in to access this website")
+                        .setView(layout)
+                        .setPositiveButton("Sign In") { dialog, _ ->
+                            handler?.proceed(userInput.text.toString(), passInput.text.toString())
+                            dialog.dismiss()
+                        }
+                        .setNegativeButton(android.R.string.cancel) { dialog, _ ->
+                            handler?.cancel()
+                            dialog.dismiss()
+                        }
+                        .setOnCancelListener {
+                            handler?.cancel()
+                        }
+                        .show()
+                }
+
+                override fun onReceivedSslError(
+                    view: WebView?,
+                    handler: android.webkit.SslErrorHandler?,
+                    error: android.net.http.SslError?
+                ) {
+                    val errorMsg = when (error?.primaryError) {
+                        android.net.http.SslError.SSL_EXPIRED -> "The security certificate has expired."
+                        android.net.http.SslError.SSL_IDMISMATCH -> "The security certificate hostname does not match."
+                        android.net.http.SslError.SSL_NOTYETVALID -> "The security certificate is not yet valid."
+                        android.net.http.SslError.SSL_UNTRUSTED -> "The certificate authority is not trusted."
+                        android.net.http.SslError.SSL_DATE_INVALID -> "The certificate date is invalid."
+                        else -> "A certificate security error occurred."
+                    }
+
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle("⚠️ Security Certificate Warning")
+                        .setMessage("$errorMsg\n\nVisiting this site may compromise your privacy or security. Do you want to proceed anyway?")
+                        .setPositiveButton("Proceed (Unsafe)") { dialog, _ ->
+                            handler?.proceed()
+                            dialog.dismiss()
+                        }
+                        .setNegativeButton("Go Back (Recommended)") { dialog, _ ->
+                            handler?.cancel()
+                            dialog.dismiss()
+                        }
+                        .setOnCancelListener {
+                            handler?.cancel()
+                        }
+                        .show()
                 }
             }
 
@@ -1557,6 +1752,133 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                override fun onShowFileChooser(
+                    webView: WebView?,
+                    filePathCallback: ValueCallback<Array<Uri>>?,
+                    fileChooserParams: FileChooserParams?
+                ): Boolean {
+                    fileUploadCallback?.onReceiveValue(null)
+                    fileUploadCallback = filePathCallback
+
+                    val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                    }
+                    if (fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    }
+                    return try {
+                        fileChooserLauncher.launch(intent)
+                        true
+                    } catch (e: Exception) {
+                        fileUploadCallback = null
+                        false
+                    }
+                }
+
+                override fun onJsAlert(
+                    view: WebView?,
+                    url: String?,
+                    message: String?,
+                    result: JsResult?
+                ): Boolean {
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle(try { Uri.parse(url ?: "").host ?: "Web page" } catch (_: Exception) { "Web page" })
+                        .setMessage(message ?: "")
+                        .setPositiveButton(android.R.string.ok) { dialog, _ ->
+                            result?.confirm()
+                            dialog.dismiss()
+                        }
+                        .setOnCancelListener {
+                            result?.cancel()
+                        }
+                        .show()
+                    return true
+                }
+
+                override fun onJsConfirm(
+                    view: WebView?,
+                    url: String?,
+                    message: String?,
+                    result: JsResult?
+                ): Boolean {
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle(try { Uri.parse(url ?: "").host ?: "Web page" } catch (_: Exception) { "Web page" })
+                        .setMessage(message ?: "")
+                        .setPositiveButton(android.R.string.ok) { dialog, _ ->
+                            result?.confirm()
+                            dialog.dismiss()
+                        }
+                        .setNegativeButton(android.R.string.cancel) { dialog, _ ->
+                            result?.cancel()
+                            dialog.dismiss()
+                        }
+                        .setOnCancelListener {
+                            result?.cancel()
+                        }
+                        .show()
+                    return true
+                }
+
+                override fun onJsPrompt(
+                    view: WebView?,
+                    url: String?,
+                    message: String?,
+                    defaultValue: String?,
+                    result: JsPromptResult?
+                ): Boolean {
+                    val input = EditText(this@MainActivity).apply {
+                        setText(defaultValue ?: "")
+                        setSelection(text.length)
+                    }
+                    val container = FrameLayout(this@MainActivity).apply {
+                        val pad = (16 * resources.displayMetrics.density).toInt()
+                        setPadding(pad, pad / 2, pad, 0)
+                        addView(input)
+                    }
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle(try { Uri.parse(url ?: "").host ?: "Web page" } catch (_: Exception) { "Web page" })
+                        .setMessage(message ?: "")
+                        .setView(container)
+                        .setPositiveButton(android.R.string.ok) { dialog, _ ->
+                            result?.confirm(input.text.toString())
+                            dialog.dismiss()
+                        }
+                        .setNegativeButton(android.R.string.cancel) { dialog, _ ->
+                            result?.cancel()
+                            dialog.dismiss()
+                        }
+                        .setOnCancelListener {
+                            result?.cancel()
+                        }
+                        .show()
+                    return true
+                }
+
+                override fun onJsBeforeUnload(
+                    view: WebView?,
+                    url: String?,
+                    message: String?,
+                    result: JsResult?
+                ): Boolean {
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Leave page?")
+                        .setMessage(message ?: "Changes you made may not be saved.")
+                        .setPositiveButton("Leave") { dialog, _ ->
+                            result?.confirm()
+                            dialog.dismiss()
+                        }
+                        .setNegativeButton("Stay") { dialog, _ ->
+                            result?.cancel()
+                            dialog.dismiss()
+                        }
+                        .setOnCancelListener {
+                            result?.cancel()
+                        }
+                        .show()
+                    return true
+                }
+
                 override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
                     showCustomView(view, ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED, callback)
                 }
@@ -1679,9 +2001,13 @@ class MainActivity : AppCompatActivity() {
         if (isSandboxActive && SandboxManager.isForgetOnSiteCloseEnabled(this)) {
             SandboxManager.clearSiteData(this, tab.webView)
         }
+        if (!isTabIncognito && tab.url.isNotBlank() && tab.url != "about:blank") {
+            TabSessionManager.pushClosedTab(this, tab)
+        }
         tab.webView.destroy()
         tabs.removeAt(index)
         tabsListState.removeIf { it.id == tab.id }
+        TabSessionManager.saveOpenTabs(this, tabs, activeTabId)
 
         if (isTabIncognito && tabs.none { it.isIncognito }) {
             cleanupIncognitoProfileData()
@@ -1924,6 +2250,20 @@ class MainActivity : AppCompatActivity() {
             onOpenHistory = {
                 showHistoryScreen()
             },
+            onOpenBookmarks = {
+                openBookmarks()
+            },
+            onToggleBookmark = {
+                val tab = getActiveTab()
+                if (tab != null && tab.url.isNotBlank() && tab.url != "about:blank") {
+                    val wasAdded = BookmarkManager.toggleBookmark(this@MainActivity, tab.title, tab.url)
+                    val msg = if (wasAdded) "Bookmark added" else "Bookmark removed"
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                } else {
+                    openBookmarks()
+                }
+            },
+            isCurrentPageBookmarked = activeTab?.url?.let { BookmarkManager.isBookmarked(this@MainActivity, it) } == true,
             onToggleUserAgent = { enabled ->
                 updateAllTabsUserAgent()
                 getActiveTab()?.webView?.reload()
@@ -1934,6 +2274,9 @@ class MainActivity : AppCompatActivity() {
             onOpenAdBlockingSettings = {
                 openAdBlockingSettings()
             },
+            onToggleAdBlock = { enabled ->
+                getActiveTab()?.webView?.reload()
+            },
             onOpenTorSettings = {
                 openTorSettings()
             },
@@ -1942,6 +2285,14 @@ class MainActivity : AppCompatActivity() {
                 getActiveTab()?.webView?.reload()
             },
             isTorActive = TorManager.isTorEnabled(this),
+            onOpenWarpSettings = {
+                openWarpSettings()
+            },
+            onToggleWarp = { enabled ->
+                updateAllTabsPrivacySettings()
+                getActiveTab()?.webView?.reload()
+            },
+            isWarpActive = WarpManager.isWarpEnabled(this),
             onToggleIncognito = {
                 toggleIncognitoMode()
             },
@@ -2003,6 +2354,12 @@ class MainActivity : AppCompatActivity() {
             },
             onOpenQrCode = {
                 showQrCodeSheet()
+            },
+            onAddToHomeScreen = {
+                addCurrentPageToHomeScreen()
+            },
+            onOpenWith = {
+                openCurrentUrlInExternalApp()
             },
             onTextSizeChanged = { zoom ->
                 getActiveTab()?.webView?.settings?.textZoom = zoom
@@ -2200,6 +2557,72 @@ class MainActivity : AppCompatActivity() {
         }
         val shareIntent = Intent.createChooser(sendIntent, "Share link")
         startActivity(shareIntent)
+    }
+
+    private fun addCurrentPageToHomeScreen() {
+        val activeTab = getActiveTab()
+        val url = activeTab?.url ?: currentUrlState.value
+        if (url.isBlank() || url == "about:blank") {
+            Toast.makeText(this, "No web page to add to home screen", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val pageTitle = activeTab?.title?.takeIf { it.isNotBlank() && it != "Blank page" && it != "Incognito" }
+            ?: try { Uri.parse(url).host?.takeIf { !it.isNullOrBlank() } } catch (_: Exception) { null }
+            ?: "Shortcut"
+
+        val shortcutIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            setClass(this@MainActivity, MainActivity::class.java)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val shortcutManager = getSystemService(android.content.pm.ShortcutManager::class.java)
+            if (shortcutManager != null && shortcutManager.isRequestPinShortcutSupported) {
+                val icon = activeTab?.favicon?.let {
+                    android.graphics.drawable.Icon.createWithBitmap(it)
+                } ?: android.graphics.drawable.Icon.createWithResource(this, R.mipmap.ic_launcher)
+
+                val pinShortcutInfo = android.content.pm.ShortcutInfo.Builder(this, "shortcut_${UUID.randomUUID()}")
+                    .setShortLabel(pageTitle.take(20))
+                    .setLongLabel(pageTitle)
+                    .setIcon(icon)
+                    .setIntent(shortcutIntent)
+                    .build()
+
+                shortcutManager.requestPinShortcut(pinShortcutInfo, null)
+                Toast.makeText(this, "Added to home screen: $pageTitle", Toast.LENGTH_SHORT).show()
+                return
+            }
+        }
+
+        val addIntent = Intent("com.android.launcher.action.INSTALL_SHORTCUT").apply {
+            putExtra(Intent.EXTRA_SHORTCUT_INTENT, shortcutIntent)
+            putExtra(Intent.EXTRA_SHORTCUT_NAME, pageTitle)
+            putExtra(Intent.EXTRA_SHORTCUT_ICON_RESOURCE, Intent.ShortcutIconResource.fromContext(this@MainActivity, R.mipmap.ic_launcher))
+            putExtra("duplicate", false)
+        }
+        sendBroadcast(addIntent)
+        Toast.makeText(this, "Added to home screen: $pageTitle", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openCurrentUrlInExternalApp() {
+        val activeTab = getActiveTab()
+        val url = activeTab?.url ?: currentUrlState.value
+        if (url.isBlank() || url == "about:blank") {
+            Toast.makeText(this, "No page to open", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            val chooser = Intent.createChooser(intent, "Open with...")
+            startActivity(chooser)
+        } catch (e: Exception) {
+            Toast.makeText(this, "No application found to open link", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun showLinkContextMenu(
@@ -2500,6 +2923,10 @@ class MainActivity : AppCompatActivity() {
         openSettings("tor")
     }
 
+    private fun openWarpSettings() {
+        openSettings("warp")
+    }
+
     private fun createMenuComposeView(): View {
         return ComposeView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -2580,6 +3007,50 @@ class MainActivity : AppCompatActivity() {
         restoreNavTabAfterOverlay()
     }
 
+    private fun createBookmarksComposeView(): View {
+        return ComposeView(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            setContent {
+                val incognito by isCurrentTabIncognito
+                RenTheme(isIncognito = incognito) {
+                    BookmarksScreen(
+                        onClose = { closeBookmarks() },
+                        onOpenBookmark = { url ->
+                            closeBookmarks()
+                            navigateToUrl(url)
+                        },
+                        onOpenInNewTab = { url ->
+                            createNewTab(url = url, isIncognito = incognito, switchToTab = false)
+                        },
+                        isIncognito = incognito
+                    )
+                }
+            }
+        }
+    }
+
+    private fun openBookmarks() {
+        closeAllOverlays()
+        webContainer.isPullToRefreshEnabled = false
+        isBookmarksOpen = true
+        currentBottomNavTab.intValue = 3
+        val bookmarksView = createBookmarksComposeView()
+        contentOverlayContainer.removeAllViews()
+        contentOverlayContainer.addView(bookmarksView)
+        contentOverlayContainer.visibility = View.VISIBLE
+        taskBarView.bringToFront()
+    }
+
+    private fun closeBookmarks() {
+        isBookmarksOpen = false
+        contentOverlayContainer.removeAllViews()
+        contentOverlayContainer.visibility = View.GONE
+        restoreNavTabAfterOverlay()
+    }
+
     private fun closeSettings() {
         isSettingsOpen = false
         contentOverlayContainer.removeAllViews()
@@ -2595,13 +3066,14 @@ class MainActivity : AppCompatActivity() {
         isMenuOpen = false
         isSettingsOpen = false
         isDownloadsOpen = false
+        isBookmarksOpen = false
         contentOverlayContainer.removeAllViews()
         contentOverlayContainer.visibility = View.GONE
     }
 
     private fun restoreNavTabAfterOverlay() {
         webContainer.isPullToRefreshEnabled = isBrowsingState.value && !isHistoryVisible && !isTabsGridVisible
-        if (isSettingsOpen || isMenuOpen || isDownloadsOpen || currentMenuSheet?.isShowing == true || currentQrCodeSheet?.isShowing == true) {
+        if (isSettingsOpen || isMenuOpen || isDownloadsOpen || isBookmarksOpen || currentMenuSheet?.isShowing == true || currentQrCodeSheet?.isShowing == true) {
             currentBottomNavTab.intValue = 3
         } else if (isTabsGridVisible) {
             currentBottomNavTab.intValue = 1
@@ -2688,12 +3160,17 @@ class MainActivity : AppCompatActivity() {
         if (customView != null) {
             hideCustomView()
         }
+        TabSessionManager.saveOpenTabs(this, tabs, activeTabId)
     }
 
     override fun onDestroy() {
         if (customView != null) {
             hideCustomView()
         }
+        themePrefsListener?.let {
+            getSharedPreferences("links_prefs", Context.MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(it)
+        }
+        TabSessionManager.saveOpenTabs(this, tabs, activeTabId)
         IncognitoNotificationManager.cancelNotification(this)
         cleanupIncognitoProfileData()
         HistoryManager.clearIncognitoHistory()

@@ -63,9 +63,9 @@ import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import com.tkno.ren.R
 
-val Md3HomeOutlined: ImageVector by lazy {
+val Md3SearchOutlined: ImageVector by lazy {
     ImageVector.Builder(
-        name = "Md3HomeOutlined",
+        name = "Md3SearchOutlined",
         defaultWidth = 24.dp,
         defaultHeight = 24.dp,
         viewportWidth = 24f,
@@ -73,62 +73,47 @@ val Md3HomeOutlined: ImageVector by lazy {
     )
     .apply {
         path(
-            stroke = SolidColor(Color.White),
-            strokeLineWidth = 2f,
-            strokeLineJoin = StrokeJoin.Round,
-            strokeLineCap = StrokeCap.Round,
+            fill = SolidColor(Color.White),
+            fillAlpha = 1f,
+            stroke = null,
+            strokeAlpha = 1f,
+            strokeLineWidth = 1f,
+            strokeLineCap = StrokeCap.Butt,
+            strokeLineJoin = StrokeJoin.Bevel,
+            strokeLineMiter = 1f,
+            pathFillType = PathFillType.NonZero,
         ) {
-            moveTo(10.9f, 4.8f)
-            quadTo(12.0f, 4.0f, 13.1f, 4.8f)
-            lineTo(18.9f, 9.2f)
-            quadTo(19.8f, 9.9f, 19.8f, 11.2f)
-            lineTo(19.8f, 18.5f)
-            quadTo(19.8f, 19.8f, 18.5f, 19.8f)
-            lineTo(14.5f, 19.8f)
-            lineTo(14.5f, 15.5f)
-            curveTo(14.5f, 13.5f, 9.5f, 13.5f, 9.5f, 15.5f)
-            lineTo(9.5f, 19.8f)
-            lineTo(5.5f, 19.8f)
-            quadTo(4.2f, 19.8f, 4.2f, 18.5f)
-            lineTo(4.2f, 11.2f)
-            quadTo(4.2f, 9.9f, 5.1f, 9.2f)
-            lineTo(10.9f, 4.8f)
+            moveTo(19.6f, 21f)
+            lineTo(13.3f, 14.7f)
+            quadToRelative(-0.75f, 0.6f, -1.72f, 0.95f)
+            reflectiveQuadTo(9.5f, 16f)
+            quadTo(6.78f, 16f, 4.89f, 14.11f)
+            quadTo(3f, 12.23f, 3f, 9.5f)
+            quadTo(3f, 6.77f, 4.89f, 4.89f)
+            reflectiveQuadTo(9.5f, 3f)
+            reflectiveQuadToRelative(4.61f, 1.89f)
+            reflectiveQuadTo(16f, 9.5f)
+            quadToRelative(0f, 1.1f, -0.35f, 2.07f)
+            reflectiveQuadTo(14.7f, 13.3f)
+            lineTo(21f, 19.6f)
+            lineTo(19.6f, 21f)
+            close()
+            moveTo(9.5f, 14f)
+            quadToRelative(1.88f, 0f, 3.19f, -1.31f)
+            reflectiveQuadTo(14f, 9.5f)
+            reflectiveQuadTo(12.69f, 6.31f)
+            reflectiveQuadTo(9.5f, 5f)
+            reflectiveQuadTo(6.31f, 6.31f)
+            reflectiveQuadTo(5f, 9.5f)
+            reflectiveQuadToRelative(1.31f, 3.19f)
+            reflectiveQuadTo(9.5f, 14f)
             close()
         }
     }
     .build()
 }
 
-val Md3HomeFilled: ImageVector by lazy {
-    ImageVector.Builder(
-        name = "Md3HomeFilled",
-        defaultWidth = 24.dp,
-        defaultHeight = 24.dp,
-        viewportWidth = 24f,
-        viewportHeight = 24f,
-    )
-    .apply {
-        path(fill = SolidColor(Color.White)) {
-            moveTo(10.8f, 4.4f)
-            quadTo(12.0f, 3.5f, 13.2f, 4.4f)
-            lineTo(19.3f, 9.1f)
-            quadTo(20.5f, 10.0f, 20.5f, 11.5f)
-            lineTo(20.5f, 19.0f)
-            quadTo(20.5f, 20.5f, 19.0f, 20.5f)
-            lineTo(14.5f, 20.5f)
-            lineTo(14.5f, 15.5f)
-            curveTo(14.5f, 13.0f, 9.5f, 13.0f, 9.5f, 15.5f)
-            lineTo(9.5f, 20.5f)
-            lineTo(5.0f, 20.5f)
-            quadTo(3.5f, 20.5f, 3.5f, 19.0f)
-            lineTo(3.5f, 11.5f)
-            quadTo(3.5f, 10.0f, 4.7f, 9.1f)
-            lineTo(10.8f, 4.4f)
-            close()
-        }
-    }
-    .build()
-}
+val Md3SearchFilled: ImageVector = Md3SearchOutlined
 
 val Md3HistoryOutlined: ImageVector by lazy {
     ImageVector.Builder(
@@ -345,11 +330,13 @@ fun FloatingBottomBar(
                     BoxWithConstraints(
                         modifier = Modifier.fillMaxSize(),
                     ) {
+                        val barPadding = 6.dp
                         val itemCount = 4
-                        val slotWidth = maxWidth / itemCount
+                        val availableWidth = (maxWidth - (barPadding * 2)).coerceAtLeast(0.dp)
+                        val slotWidth = availableWidth / itemCount
 
                         val clampedIndex = selectedTab.coerceIn(0, itemCount - 1)
-                        val targetOffsetX = slotWidth * clampedIndex
+                        val targetOffsetX = barPadding + (slotWidth * clampedIndex)
 
                         val animatedOffsetX by animateDpAsState(
                             targetValue = targetOffsetX,
@@ -366,7 +353,7 @@ fun FloatingBottomBar(
                                 .offset(x = animatedOffsetX)
                                 .width(slotWidth)
                                 .fillMaxHeight()
-                                .padding(horizontal = 4.dp, vertical = 6.dp)
+                                .padding(vertical = barPadding)
                                 .clip(if (useClassicTaskbar) RoundedCornerShape(12.dp) else RoundedCornerShape(percent = 50))
                                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
                         )
@@ -374,11 +361,13 @@ fun FloatingBottomBar(
                         // Tab buttons Row
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = barPadding),
                         ) {
                             val items =
                                 listOf(
-                                    Triple(0, Md3HomeOutlined, Md3HomeFilled),
+                                    Triple(0, Md3SearchOutlined, Md3SearchFilled),
                                     Triple(1, Md3TabOutlined, Md3TabFilled),
                                     Triple(2, Md3HistoryOutlined, Md3HistoryFilled),
                                     Triple(3, Md3CategorySearchOutlined, Md3CategorySearchFilled),
@@ -389,7 +378,7 @@ fun FloatingBottomBar(
                                 val icon = if (isSelected) filledIcon else outlineIcon
                                 val label =
                                     when (index) {
-                                        0 -> if (isIncognito) "Incognito" else "Home"
+                                        0 -> if (isIncognito) "Incognito" else "Search"
                                         1 -> "Tabs"
                                         2 -> "History"
                                         else -> "Options"

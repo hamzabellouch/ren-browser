@@ -57,6 +57,7 @@ object SiteConfigManager {
     private const val KEY_PROTECTED_CONTENT_ENABLED = "protected_content_enabled"
     private const val KEY_AUTOMATIC_DOWNLOADS = "automatic_downloads_permission" // "ask", "allow", "block"
     private const val KEY_INSECURE_CONTENT_BLOCKED = "insecure_content_blocked"
+    private const val KEY_HTTPS_ONLY_MODE = "https_only_mode"
 
     // DNS Providers
     data class DnsProvider(
@@ -425,6 +426,14 @@ object SiteConfigManager {
 
     fun setInsecureContentBlocked(context: Context, blocked: Boolean) {
         getPrefs(context).edit().putBoolean(KEY_INSECURE_CONTENT_BLOCKED, blocked).apply()
+    }
+
+    fun isHttpsOnlyMode(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_HTTPS_ONLY_MODE, true)
+    }
+
+    fun setHttpsOnlyMode(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_HTTPS_ONLY_MODE, enabled).apply()
     }
 
     // --- Runtime Enforcement & WebView Application ---

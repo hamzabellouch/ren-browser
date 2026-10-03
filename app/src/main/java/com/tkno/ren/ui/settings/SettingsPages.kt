@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -125,6 +126,9 @@ import com.tkno.ren.ui.ClearDataDialog
 import com.tkno.ren.ui.sandbox.SandboxIcon
 import com.tkno.ren.ui.theme.ThemeManager
 import androidx.compose.material3.RadioButton
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.ui.res.painterResource
 import com.tkno.ren.util.AdBlockManager
 import com.tkno.ren.util.DownloadsManager
 import com.tkno.ren.util.FilterSubscription
@@ -133,8 +137,15 @@ import com.tkno.ren.util.ScriptManager
 import com.tkno.ren.util.SearchEngineManager
 import com.tkno.ren.util.TorEngine
 import com.tkno.ren.util.TorManager
+import com.tkno.ren.rentor.BridgeType
+import com.tkno.ren.rentor.RenTorEngine
+import com.tkno.ren.rentor.RenTorManager
+import com.tkno.ren.rentor.RenTorStatus
+import androidx.compose.runtime.collectAsState
 import com.tkno.ren.util.UserAgentManager
 import com.tkno.ren.util.UserScript
+import com.tkno.ren.util.WarpManager
+import com.tkno.ren.util.WarpSecurityMode
 import com.tkno.ren.util.WebRtcManager
 import java.util.Locale
 
@@ -176,6 +187,7 @@ fun SettingsHost(
         "interface_interaction" -> InterfaceInteractionSettingsPage(onBack = navigateBack)
         "privacy" -> PrivacySettingsPage(onBack = navigateBack, onNavigateTo = navigateTo, onClearData = onClearData)
         "tor" -> TorSettingsPage(onBack = navigateBack)
+        "warp" -> WarpSettingsPage(onBack = navigateBack)
         "ad_blocking" -> AdBlockingSettingsPage(onBack = navigateBack, onNavigateTo = navigateTo)
         "custom_filters" -> CustomFiltersPage(onBack = navigateBack)
         "filter_subscriptions" -> FilterSubscriptionsPage(onBack = navigateBack)
@@ -964,6 +976,9 @@ fun NetworkIdentitySettingsPage(
     var isWebRtcBlockEnabled by remember {
         mutableStateOf(WebRtcManager.isWebRtcBlockEnabled(context))
     }
+    var isWarpEnabled by remember {
+        mutableStateOf(WarpManager.isWarpEnabled(context))
+    }
 
     var showClearBrowsingDataDialog by remember { mutableStateOf(false) }
 
@@ -989,6 +1004,29 @@ fun NetworkIdentitySettingsPage(
         ) {
             item {
                 PreferenceSubtitle(text = "Network & Identity")
+            }
+            item {
+                PreferenceSwitchWithDivider(
+                    title = stringResource(id = R.string.cloudflare_warp),
+                    description = if (isWarpEnabled)
+                        stringResource(id = R.string.cloudflare_warp_enabled)
+                    else
+                        stringResource(id = R.string.cloudflare_warp_desc),
+                    icon = painterResource(id = R.drawable.ic_cloudflare_warp),
+                    isChecked = isWarpEnabled,
+                    onClick = { onNavigateTo("warp") },
+                    onCheckedChange = { checked ->
+                        WarpManager.toggleWarp(context) { enabled, success, errorMsg ->
+                            isWarpEnabled = enabled
+                            val msg = if (enabled) {
+                                if (success) context.getString(R.string.cloudflare_warp_enabled) else "Failed to apply Cloudflare WARP proxy"
+                            } else {
+                                errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                            }
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                )
             }
             item {
                 PreferenceSwitchWithDivider(
@@ -1532,6 +1570,7 @@ fun PrivacySettingsPage(
 ) {
     val context = LocalContext.current
     var isTorEnabled by remember { mutableStateOf(TorManager.isTorEnabled(context)) }
+    var isWarpEnabled by remember { mutableStateOf(WarpManager.isWarpEnabled(context)) }
     var clearOnExit by remember { mutableStateOf(false) }
     var showClearBrowsingDataDialog by remember { mutableStateOf(false) }
 
@@ -1540,6 +1579,35 @@ fun PrivacySettingsPage(
         onBack = onBack
     ) { innerPadding ->
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = innerPadding) {
+            item {
+                PreferenceSubtitle(text = "High-Speed VPN & Cloudflare WARP")
+            }
+            item {
+                PreferenceSwitchWithDivider(
+                    title = stringResource(id = R.string.cloudflare_warp),
+                    description = if (isWarpEnabled)
+                        stringResource(id = R.string.cloudflare_warp_enabled)
+                    else
+                        stringResource(id = R.string.cloudflare_warp_desc),
+                    icon = painterResource(id = R.drawable.ic_cloudflare_warp),
+                    isChecked = isWarpEnabled,
+                    onCheckedChange = { checked ->
+                        WarpManager.toggleWarp(context) { enabled, success, errorMsg ->
+                            isWarpEnabled = enabled
+                            val msg = if (enabled) {
+                                if (success) context.getString(R.string.cloudflare_warp_enabled) else "Failed to apply WARP routing"
+                            } else {
+                                errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                            }
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onClick = {
+                        onNavigateTo("warp")
+                    }
+                )
+            }
+
             item {
                 PreferenceSubtitle(text = "Anonymity & Tor Network")
             }
@@ -1622,15 +1690,39 @@ fun TorSettingsPage(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    var isTorEnabled by remember { mutableStateOf(TorManager.isTorEnabled(context)) }
-    val proxyHost = remember { TorManager.getProxyHost(context) }
-    var proxyPort by remember { mutableIntStateOf(TorManager.getProxyPort(context)) }
-    var blockGeo by remember { mutableStateOf(TorManager.isBlockGeolocation(context)) }
+    val engineState by RenTorEngine.state.collectAsState()
+    var isTorEnabled by remember { mutableStateOf(RenTorManager.isTorEnabled(context)) }
+    val proxyHost = remember { RenTorManager.getProxyHost(context) }
+    var proxyPort by remember { mutableIntStateOf(RenTorManager.getProxyPort(context)) }
+    var controlPort by remember { mutableIntStateOf(RenTorManager.getControlPort(context)) }
+    var blockGeo by remember { mutableStateOf(RenTorManager.isBlockGeolocation(context)) }
+    var useBridges by remember { mutableStateOf(RenTorManager.isUseBridgesEnabled(context)) }
+    var bridgeType by remember { mutableStateOf(RenTorManager.getBridgeType(context)) }
+    var exitCountry by remember { mutableStateOf(RenTorManager.getExitCountry(context)) }
+
     var showPortDialog by remember { mutableStateOf(false) }
     var tempPortString by remember { mutableStateOf(proxyPort.toString()) }
+    var showBridgeDialog by remember { mutableStateOf(false) }
+    var showCountryDialog by remember { mutableStateOf(false) }
+    var showCustomBridgeDialog by remember { mutableStateOf(false) }
+    var customBridgesText by remember { mutableStateOf(RenTorManager.getCustomBridges(context)) }
 
     var testStatusText by remember { mutableStateOf<String?>(null) }
     var isTestingConnection by remember { mutableStateOf(false) }
+    var isRenewingIdentity by remember { mutableStateOf(false) }
+
+    val countries = remember {
+        listOf(
+            null to "Automatic (Any Country)",
+            "ch" to "Switzerland 🇨🇭 (High Privacy)",
+            "is" to "Iceland 🇮🇸 (High Privacy)",
+            "de" to "Germany 🇩🇪",
+            "nl" to "Netherlands 🇳🇱",
+            "se" to "Sweden 🇸🇪",
+            "us" to "United States 🇺🇸",
+            "ca" to "Canada 🇨🇦"
+        )
+    }
 
     BasePreferencePage(
         title = stringResource(id = R.string.tor_settings),
@@ -1638,16 +1730,31 @@ fun TorSettingsPage(
     ) { innerPadding ->
         LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = innerPadding) {
             item {
+                PreferenceSubtitle(text = "Ren-Tor Privacy Engine")
+            }
+
+            item {
                 PreferenceSwitch(
                     title = stringResource(id = R.string.tor_network),
-                    description = stringResource(id = R.string.tor_network_desc),
+                    description = if (isTorEnabled) {
+                        when (engineState.status) {
+                            RenTorStatus.CONNECTED -> "✓ Ren-Tor Connected & Routing (SOCKS:$proxyPort)"
+                            RenTorStatus.BOOTSTRAPPING -> "Bootstrapping circuits... (${engineState.bootstrapProgress}%)"
+                            RenTorStatus.INITIALIZING -> "Initializing Ren-Tor daemon..."
+                            RenTorStatus.REFRESHING_IDENTITY -> "Renewing Tor circuits & identity..."
+                            RenTorStatus.ERROR -> "Engine error: ${engineState.lastError ?: "Failed to connect"}"
+                            else -> stringResource(id = R.string.tor_network_enabled)
+                        }
+                    } else {
+                        stringResource(id = R.string.tor_network_desc)
+                    },
                     icon = Icons.Outlined.VpnLock,
                     isChecked = isTorEnabled,
                     onClick = {
-                        TorManager.toggleTor(context) { enabled, success ->
+                        RenTorManager.toggleTor(context) { enabled, success ->
                             isTorEnabled = enabled
                             val msg = if (enabled) {
-                                if (success) context.getString(R.string.tor_network_enabled) else "Tor proxy locked (Routing via 127.0.0.1:9050)"
+                                if (success) context.getString(R.string.tor_network_enabled) else "Ren-Tor proxy locked (Routing via 127.0.0.1:$proxyPort)"
                             } else {
                                 context.getString(R.string.tor_network_disabled)
                             }
@@ -1657,26 +1764,103 @@ fun TorSettingsPage(
                 )
             }
 
+            if (isTorEnabled) {
+                item {
+                    PreferenceItem(
+                        title = stringResource(id = R.string.ren_tor_renew_identity),
+                        description = if (isRenewingIdentity) "Requesting fresh circuit (NEWNYM)..." else stringResource(id = R.string.ren_tor_renew_identity_desc),
+                        icon = Icons.Outlined.Refresh,
+                        onClick = {
+                            if (!isRenewingIdentity) {
+                                isRenewingIdentity = true
+                                RenTorManager.renewIdentity { success, msg ->
+                                    isRenewingIdentity = false
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+
+            item {
+                PreferenceSubtitle(text = "Anti-Censorship & Bridges")
+            }
+
+            item {
+                PreferenceSwitch(
+                    title = stringResource(id = R.string.ren_tor_bridges),
+                    description = if (useBridges) "Using ${bridgeType.displayName}" else stringResource(id = R.string.ren_tor_bridges_desc),
+                    icon = Icons.Outlined.Shield,
+                    isChecked = useBridges,
+                    onClick = {
+                        val next = !useBridges
+                        useBridges = next
+                        RenTorManager.setUseBridgesEnabled(context, next)
+                        if (next && bridgeType == BridgeType.NONE) {
+                            bridgeType = BridgeType.SNOWFLAKE
+                            RenTorManager.setBridgeType(context, BridgeType.SNOWFLAKE)
+                        }
+                    }
+                )
+            }
+
+            if (useBridges) {
+                item {
+                    PreferenceItem(
+                        title = "Bridge Transport Type",
+                        description = bridgeType.displayName,
+                        icon = Icons.Outlined.Tune,
+                        onClick = { showBridgeDialog = true }
+                    )
+                }
+
+                if (bridgeType == BridgeType.CUSTOM) {
+                    item {
+                        PreferenceItem(
+                            title = "Configure Custom Bridges",
+                            description = if (customBridgesText.isBlank()) "Tap to enter bridge lines" else customBridgesText.take(40) + "...",
+                            icon = Icons.Outlined.EditNote,
+                            onClick = { showCustomBridgeDialog = true }
+                        )
+                    }
+                }
+            }
+
+            item {
+                PreferenceSubtitle(text = "Geographic Exit Nodes")
+            }
+
+            item {
+                val currentCountryLabel = countries.find { it.first == exitCountry }?.second ?: (exitCountry?.uppercase() ?: "Automatic (Any Country)")
+                PreferenceItem(
+                    title = stringResource(id = R.string.ren_tor_exit_country),
+                    description = currentCountryLabel,
+                    icon = Icons.Outlined.Public,
+                    onClick = { showCountryDialog = true }
+                )
+            }
+
             item {
                 PreferenceSubtitle(text = "Status & Diagnostics")
             }
 
             item {
                 PreferenceItem(
-                    title = "Test Tor Connection",
-                    description = if (isTestingConnection) "Checking Tor exit node..." else (testStatusText ?: "Tap to verify Tor routing and check your public Exit IP"),
+                    title = stringResource(id = R.string.ren_tor_test_connection),
+                    description = if (isTestingConnection) "Connecting through Ren-Tor exit node..." else (testStatusText ?: stringResource(id = R.string.ren_tor_test_connection_desc)),
                     icon = Icons.Outlined.Security,
                     onClick = {
                         if (!isTestingConnection) {
                             isTestingConnection = true
-                            testStatusText = "Connecting through Tor to check.torproject.org..."
-                            TorEngine.verifyTorConnection(
+                            testStatusText = "Connecting through Ren-Tor to check.torproject.org..."
+                            RenTorEngine.verifyConnection(
                                 host = proxyHost,
                                 port = proxyPort
                             ) { isTor, ip, message ->
                                 isTestingConnection = false
                                 testStatusText = if (isTor && ip != null) {
-                                    "✓ Tor Verified! Exit IP: $ip"
+                                    "✓ Ren-Tor Verified! Exit IP: $ip"
                                 } else if (ip != null) {
                                     "IP: $ip (Not Tor - $message)"
                                 } else {
@@ -1689,7 +1873,7 @@ fun TorSettingsPage(
             }
 
             item {
-                PreferenceSubtitle(text = "Proxy Configuration")
+                PreferenceSubtitle(text = "Proxy & Port Configuration")
             }
 
             item {
@@ -1704,7 +1888,7 @@ fun TorSettingsPage(
             item {
                 PreferenceItem(
                     title = stringResource(id = R.string.tor_proxy_port),
-                    description = "SOCKS Port: $proxyPort (Default: 9050)",
+                    description = "SOCKS Port: $proxyPort (Control: $controlPort)",
                     icon = Icons.Outlined.Tune,
                     onClick = {
                         tempPortString = proxyPort.toString()
@@ -1714,7 +1898,7 @@ fun TorSettingsPage(
             }
 
             item {
-                PreferenceSubtitle(text = "Privacy & Anti-Tracking")
+                PreferenceSubtitle(text = "Privacy & Zero-Leak Protection")
             }
 
             item {
@@ -1726,11 +1910,117 @@ fun TorSettingsPage(
                     onClick = {
                         val newGeo = !blockGeo
                         blockGeo = newGeo
-                        TorManager.setBlockGeolocation(context, newGeo)
+                        RenTorManager.setBlockGeolocation(context, newGeo)
                     }
                 )
             }
         }
+    }
+
+    if (showCountryDialog) {
+        AlertDialog(
+            onDismissRequest = { showCountryDialog = false },
+            title = { Text(stringResource(id = R.string.ren_tor_exit_country)) },
+            text = {
+                Column {
+                    countries.forEach { (code, label) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    exitCountry = code
+                                    RenTorManager.setExitCountry(context, code)
+                                    showCountryDialog = false
+                                }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = (exitCountry == code),
+                                onClick = null
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showCountryDialog = false }) {
+                    Text(stringResource(id = R.string.close))
+                }
+            }
+        )
+    }
+
+    if (showBridgeDialog) {
+        AlertDialog(
+            onDismissRequest = { showBridgeDialog = false },
+            title = { Text("Select Bridge Type") },
+            text = {
+                Column {
+                    listOf(
+                        BridgeType.SNOWFLAKE,
+                        BridgeType.OBFS4,
+                        BridgeType.MEEK_AZURE,
+                        BridgeType.CUSTOM
+                    ).forEach { type ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    bridgeType = type
+                                    RenTorManager.setBridgeType(context, type)
+                                    showBridgeDialog = false
+                                }
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = (bridgeType == type),
+                                onClick = null
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(text = type.displayName, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showBridgeDialog = false }) {
+                    Text(stringResource(id = R.string.close))
+                }
+            }
+        )
+    }
+
+    if (showCustomBridgeDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomBridgeDialog = false },
+            title = { Text("Custom Bridge Relays") },
+            text = {
+                OutlinedTextField(
+                    value = customBridgesText,
+                    onValueChange = { customBridgesText = it },
+                    label = { Text("Bridge lines (one per line)") },
+                    modifier = Modifier.fillMaxWidth().height(120.dp),
+                    maxLines = 5
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    RenTorManager.setCustomBridges(context, customBridgesText)
+                    showCustomBridgeDialog = false
+                }) {
+                    Text(stringResource(id = R.string.proceed))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomBridgeDialog = false }) {
+                    Text(stringResource(id = R.string.cancel))
+                }
+            }
+        )
     }
 
     if (showPortDialog) {
@@ -1750,9 +2040,9 @@ fun TorSettingsPage(
                     val parsed = tempPortString.toIntOrNull()
                     if (parsed != null && parsed in 1..65535) {
                         proxyPort = parsed
-                        TorManager.setProxyPort(context, parsed)
+                        RenTorManager.setProxyPort(context, parsed)
                         if (isTorEnabled) {
-                            TorManager.applyProxyOverride(context)
+                            RenTorManager.applyProxyOverride(context)
                         }
                         showPortDialog = false
                     } else {
@@ -1765,6 +2055,361 @@ fun TorSettingsPage(
             dismissButton = {
                 TextButton(onClick = { showPortDialog = false }) {
                     Text(stringResource(id = R.string.cancel))
+                }
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WarpSettingsPage(
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    var isWarpEnabled by remember { mutableStateOf(WarpManager.isWarpEnabled(context)) }
+    var proxyHost by remember { mutableStateOf(WarpManager.getProxyHost(context)) }
+    var proxyPort by remember { mutableIntStateOf(WarpManager.getProxyPort(context)) }
+    var securityMode by remember { mutableStateOf(WarpManager.getSecurityMode(context)) }
+    var licenseKey by remember { mutableStateOf(WarpManager.getLicenseKey(context)) }
+    var isDohEnabled by remember { mutableStateOf(WarpManager.isDohEnabled(context)) }
+
+    var showHostDialog by remember { mutableStateOf(false) }
+    var tempHostString by remember { mutableStateOf(proxyHost) }
+    var showPortDialog by remember { mutableStateOf(false) }
+    var tempPortString by remember { mutableStateOf(proxyPort.toString()) }
+    var showLicenseDialog by remember { mutableStateOf(false) }
+    var tempLicenseString by remember { mutableStateOf(licenseKey) }
+    var showSecurityModeDialog by remember { mutableStateOf(false) }
+
+    var testStatusText by remember { mutableStateOf<String?>(null) }
+    var isTestingConnection by remember { mutableStateOf(false) }
+    var proxyPingStatus by remember { mutableStateOf<String?>(null) }
+    var isPingingProxy by remember { mutableStateOf(false) }
+
+    BasePreferencePage(
+        title = stringResource(id = R.string.cloudflare_warp_settings),
+        onBack = onBack
+    ) { innerPadding ->
+        LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = innerPadding) {
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Outlined.Info,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "How Cloudflare in Ren works",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "• Cloudflare WARP Proxy: Routes browser traffic through Cloudflare Edge and changes your public IP. Requires an active WARP / SOCKS5 proxy on the configured endpoint below.\n\n• 1.1.1.1 Secure DNS (DoH): Encrypts DNS lookups so internet providers cannot see domains you visit (DNS encryption does not change your public IP address).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            item {
+                PreferenceSwitch(
+                    title = stringResource(id = R.string.cloudflare_warp),
+                    description = if (isWarpEnabled)
+                        stringResource(id = R.string.cloudflare_warp_enabled)
+                    else
+                        stringResource(id = R.string.cloudflare_warp_desc),
+                    icon = painterResource(id = R.drawable.ic_cloudflare_warp),
+                    isChecked = isWarpEnabled,
+                    onClick = {
+                        WarpManager.toggleWarp(context) { enabled, success, errorMsg ->
+                            isWarpEnabled = enabled
+                            val msg = if (enabled) {
+                                if (success) context.getString(R.string.cloudflare_warp_enabled) else "WARP proxy applied"
+                            } else {
+                                errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                            }
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                )
+            }
+
+            item {
+                PreferenceSubtitle(text = "Status & Diagnostics")
+            }
+
+            item {
+                PreferenceItem(
+                    title = "Test Proxy Port Reachability",
+                    description = if (isPingingProxy) "Testing connection to $proxyHost:$proxyPort..." else (proxyPingStatus ?: "Check if the local/remote WARP proxy daemon is running on $proxyHost:$proxyPort"),
+                    icon = Icons.Outlined.Tune,
+                    onClick = {
+                        if (!isPingingProxy) {
+                            isPingingProxy = true
+                            proxyPingStatus = "Pinging proxy port $proxyHost:$proxyPort..."
+                            WarpManager.checkProxyHealth(context) { isOpen, msg ->
+                                isPingingProxy = false
+                                proxyPingStatus = if (isOpen) "✓ $msg" else "✗ $msg"
+                            }
+                        }
+                    }
+                )
+            }
+
+            item {
+                PreferenceItem(
+                    title = stringResource(id = R.string.warp_diagnostics),
+                    description = if (isTestingConnection) "Checking Cloudflare edge connection..." else (testStatusText ?: stringResource(id = R.string.warp_diagnostics_desc)),
+                    icon = Icons.Outlined.Security,
+                    onClick = {
+                        if (!isTestingConnection) {
+                            isTestingConnection = true
+                            testStatusText = "Connecting to Cloudflare edge..."
+                            WarpManager.verifyWarpConnection(context) { isWarp, ip, loc, colo, message ->
+                                isTestingConnection = false
+                                testStatusText = if (ip != null) {
+                                    if (isWarp) "✓ Active IP: $ip ($colo, $loc) • $message" else "⚠ Real IP Exposed: $ip ($colo, $loc) • $message"
+                                } else {
+                                    "Status: $message"
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+
+            item {
+                PreferenceSubtitle(text = "Security & DNS Mode")
+            }
+
+            item {
+                PreferenceItem(
+                    title = stringResource(id = R.string.warp_security_mode),
+                    description = securityMode.title,
+                    icon = Icons.Outlined.Shield,
+                    onClick = {
+                        showSecurityModeDialog = true
+                    }
+                )
+            }
+
+            item {
+                PreferenceSwitch(
+                    title = "DNS over HTTPS (1.1.1.1 DoH)",
+                    description = "Encrypt all DNS requests using Cloudflare Anycast resolvers",
+                    icon = Icons.Outlined.Lock,
+                    isChecked = isDohEnabled,
+                    onClick = {
+                        val newDoh = !isDohEnabled
+                        isDohEnabled = newDoh
+                        WarpManager.setDohEnabled(context, newDoh)
+                    }
+                )
+            }
+
+            item {
+                PreferenceSubtitle(text = "Proxy & Endpoint Configuration")
+            }
+
+            item {
+                PreferenceItem(
+                    title = "WARP Proxy Host",
+                    description = "Host: $proxyHost (Default: 127.0.0.1)",
+                    icon = Icons.Outlined.Computer,
+                    onClick = {
+                        tempHostString = proxyHost
+                        showHostDialog = true
+                    }
+                )
+            }
+
+            item {
+                PreferenceItem(
+                    title = stringResource(id = R.string.warp_proxy_port),
+                    description = "WARP SOCKS/HTTP Port: $proxyPort (Default: 9060)",
+                    icon = Icons.Outlined.Tune,
+                    onClick = {
+                        tempPortString = proxyPort.toString()
+                        showPortDialog = true
+                    }
+                )
+            }
+
+            item {
+                PreferenceItem(
+                    title = stringResource(id = R.string.warp_license_key),
+                    description = if (licenseKey.isNotEmpty()) "Configured (WARP+ Active)" else stringResource(id = R.string.warp_license_key_desc),
+                    icon = Icons.Outlined.Key,
+                    onClick = {
+                        tempLicenseString = licenseKey
+                        showLicenseDialog = true
+                    }
+                )
+            }
+        }
+    }
+
+    if (showHostDialog) {
+        AlertDialog(
+            onDismissRequest = { showHostDialog = false },
+            title = { Text("WARP Proxy Host") },
+            text = {
+                OutlinedTextField(
+                    value = tempHostString,
+                    onValueChange = { tempHostString = it },
+                    label = { Text("Host Address (e.g. 127.0.0.1)") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val trimmed = tempHostString.trim()
+                    if (trimmed.isNotEmpty()) {
+                        proxyHost = trimmed
+                        WarpManager.setProxyHost(context, trimmed)
+                        if (isWarpEnabled) {
+                            WarpManager.applyProxyOverride(context)
+                        }
+                        showHostDialog = false
+                    }
+                }) {
+                    Text(stringResource(id = R.string.proceed))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showHostDialog = false }) {
+                    Text(stringResource(id = R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (showPortDialog) {
+        AlertDialog(
+            onDismissRequest = { showPortDialog = false },
+            title = { Text(stringResource(id = R.string.warp_proxy_port)) },
+            text = {
+                OutlinedTextField(
+                    value = tempPortString,
+                    onValueChange = { tempPortString = it },
+                    label = { Text("Port Number") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val parsed = tempPortString.toIntOrNull()
+                    if (parsed != null && parsed in 1..65535) {
+                        proxyPort = parsed
+                        WarpManager.setProxyPort(context, parsed)
+                        if (isWarpEnabled) {
+                            WarpManager.applyProxyOverride(context)
+                        }
+                        showPortDialog = false
+                    } else {
+                        Toast.makeText(context, "Invalid port (1-65535)", Toast.LENGTH_SHORT).show()
+                    }
+                }) {
+                    Text(stringResource(id = R.string.proceed))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPortDialog = false }) {
+                    Text(stringResource(id = R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (showLicenseDialog) {
+        AlertDialog(
+            onDismissRequest = { showLicenseDialog = false },
+            title = { Text(stringResource(id = R.string.warp_license_key)) },
+            text = {
+                Column {
+                    Text(
+                        text = "Paste your Cloudflare WARP+ license key from the 1.1.1.1 app or Zero Trust dashboard.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(bottom = 12.dp)
+                    )
+                    OutlinedTextField(
+                        value = tempLicenseString,
+                        onValueChange = { tempLicenseString = it },
+                        label = { Text("License Key") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    licenseKey = tempLicenseString.trim()
+                    WarpManager.setLicenseKey(context, licenseKey)
+                    showLicenseDialog = false
+                    Toast.makeText(context, "WARP key saved", Toast.LENGTH_SHORT).show()
+                }) {
+                    Text(stringResource(id = R.string.proceed))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLicenseDialog = false }) {
+                    Text(stringResource(id = R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (showSecurityModeDialog) {
+        AlertDialog(
+            onDismissRequest = { showSecurityModeDialog = false },
+            title = { Text(stringResource(id = R.string.warp_security_mode)) },
+            text = {
+                Column {
+                    WarpSecurityMode.values().forEach { mode ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    securityMode = mode
+                                    WarpManager.setSecurityMode(context, mode)
+                                    showSecurityModeDialog = false
+                                }
+                                .padding(vertical = 8.dp)
+                        ) {
+                            RadioButton(
+                                selected = (securityMode == mode),
+                                onClick = {
+                                    securityMode = mode
+                                    WarpManager.setSecurityMode(context, mode)
+                                    showSecurityModeDialog = false
+                                }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = mode.title,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSecurityModeDialog = false }) {
+                    Text(stringResource(id = R.string.close))
                 }
             }
         )
@@ -2657,7 +3302,7 @@ fun AboutSettingsPage(onBack: () -> Unit) {
             item {
                 PreferenceItem(
                     title = "Ren Browser",
-                    description = "Version 0.0.1-beta (Material 3 Edition)",
+                    description = "Version 0.0.2-beta (Material 3 Edition)",
                     icon = Icons.Outlined.Info,
                     onClick = {}
                 )

@@ -1099,6 +1099,17 @@ class SettingsView(
         }
 
         val items = listOf(
+            SettingItem(
+                title = "Cloudflare WARP",
+                subtitle = "Fast, encrypted connection via Cloudflare network and 1.1.1.1 DNS",
+                type = SettingType.SWITCH,
+                isChecked = com.tkno.ren.util.WarpManager.isWarpEnabled(context),
+                onToggle = { isChecked ->
+                    com.tkno.ren.util.WarpManager.toggleWarp(context) { enabled, _, _ ->
+                        showView(createPrivacySettingsView())
+                    }
+                }
+            ),
             SettingItem("Do not track", "", SettingType.SWITCH, isChecked = false),
             SettingItem("Disable WebRTC", "", SettingType.SWITCH, isChecked = false),
             SettingItem(

@@ -6,8 +6,8 @@ The following versions of **Ren Browser** are actively maintained with security 
 
 | Version          | Supported          |
 | ---------------- | ------------------ |
-| >= 0.0.1-beta | :white_check_mark: |
-| < 0.0.1-beta  | :x:                |
+| >= 0.0.2-beta | :white_check_mark: |
+| < 0.0.2-beta  | :x:                |
 
 ---
 

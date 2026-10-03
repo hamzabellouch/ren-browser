@@ -140,6 +140,7 @@ import com.tkno.ren.ui.settings.RenSettingsDarkColorScheme
 import com.tkno.ren.ui.settings.SandboxSettingsPage
 import com.tkno.ren.ui.settings.ScriptsSettingsPage
 import com.tkno.ren.ui.settings.TorSettingsPage
+import com.tkno.ren.ui.settings.WarpSettingsPage
 import com.tkno.ren.ui.settings.UserAgentSettingsPage
 import com.tkno.ren.ui.settings.SiteConfigurationPage
 import com.tkno.ren.ui.settings.SecureDnsSettingsPage
@@ -1709,6 +1710,11 @@ fun MenuHost(
                 }
                 "tor" -> {
                     TorSettingsPage(
+                        onBack = navigateBack
+                    )
+                }
+                "warp" -> {
+                    WarpSettingsPage(
                         onBack = navigateBack
                     )
                 }

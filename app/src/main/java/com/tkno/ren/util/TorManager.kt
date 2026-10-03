@@ -1,12 +1,10 @@
 package com.tkno.ren.util
 
 import android.content.Context
-import android.content.SharedPreferences
-import android.util.Log
-import android.webkit.GeolocationPermissions
-import androidx.webkit.ProxyConfig
-import androidx.webkit.ProxyController
-import androidx.webkit.WebViewFeature
+import com.tkno.ren.rentor.BridgeType
+import com.tkno.ren.rentor.RenTorEngine
+import com.tkno.ren.rentor.RenTorManager
+import com.tkno.ren.rentor.RenTorStatus
 
 enum class TorStatus {
     DISCONNECTED,
@@ -15,118 +13,52 @@ enum class TorStatus {
     ERROR
 }
 
+/**
+ * Legacy compatibility delegate for [RenTorManager].
+ */
 object TorManager {
-    private const val TAG = "TorManager"
-    private const val PREFS_NAME = "ren_tor_prefs"
-    private const val KEY_TOR_ENABLED = "tor_enabled"
-    private const val KEY_PROXY_HOST = "tor_proxy_host"
-    private const val KEY_PROXY_PORT = "tor_proxy_port"
-    private const val KEY_BLOCK_GEOLOCATION = "tor_block_geolocation"
-
-    private const val DEFAULT_HOST = "127.0.0.1"
-    private const val DEFAULT_PORT = 9050
-
-    var status: TorStatus = TorStatus.DISCONNECTED
-        private set
-
-    private fun getPrefs(context: Context): SharedPreferences {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    }
-
-    fun isTorEnabled(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_TOR_ENABLED, false)
-    }
-
-    fun setTorEnabled(context: Context, enabled: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_TOR_ENABLED, enabled).apply()
-        if (!enabled) {
-            status = TorStatus.DISCONNECTED
+    val status: TorStatus
+        get() = when (RenTorEngine.state.value.status) {
+            RenTorStatus.DISCONNECTED, RenTorStatus.STOPPING -> TorStatus.DISCONNECTED
+            RenTorStatus.INITIALIZING, RenTorStatus.BOOTSTRAPPING, RenTorStatus.REFRESHING_IDENTITY -> TorStatus.CONNECTING
+            RenTorStatus.CONNECTED -> TorStatus.CONNECTED
+            RenTorStatus.ERROR -> TorStatus.ERROR
         }
-    }
 
-    fun getProxyHost(context: Context): String {
-        return getPrefs(context).getString(KEY_PROXY_HOST, DEFAULT_HOST) ?: DEFAULT_HOST
-    }
+    fun isTorEnabled(context: Context): Boolean = RenTorManager.isTorEnabled(context)
 
-    fun setProxyHost(context: Context, host: String) {
-        getPrefs(context).edit().putString(KEY_PROXY_HOST, host.trim()).apply()
-    }
+    fun setTorEnabled(context: Context, enabled: Boolean) = RenTorManager.setTorEnabled(context, enabled)
 
-    fun getProxyPort(context: Context): Int {
-        return getPrefs(context).getInt(KEY_PROXY_PORT, DEFAULT_PORT)
-    }
+    fun isUseBridgesEnabled(context: Context): Boolean = RenTorManager.isUseBridgesEnabled(context)
 
-    fun setProxyPort(context: Context, port: Int) {
-        getPrefs(context).edit().putInt(KEY_PROXY_PORT, port).apply()
-    }
+    fun setUseBridgesEnabled(context: Context, enabled: Boolean) = RenTorManager.setUseBridgesEnabled(context, enabled)
 
-    fun isBlockGeolocation(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_BLOCK_GEOLOCATION, true)
-    }
+    fun getBridgeType(context: Context): String = RenTorManager.getBridgeType(context).code
 
-    fun setBlockGeolocation(context: Context, enabled: Boolean) {
-        getPrefs(context).edit().putBoolean(KEY_BLOCK_GEOLOCATION, enabled).apply()
-    }
+    fun setBridgeType(context: Context, type: String) = RenTorManager.setBridgeType(context, BridgeType.fromCode(type))
+
+    fun getCustomBridges(context: Context): String = RenTorManager.getCustomBridges(context)
+
+    fun setCustomBridges(context: Context, bridges: String) = RenTorManager.setCustomBridges(context, bridges)
+
+    fun getProxyHost(context: Context): String = RenTorManager.getProxyHost(context)
+
+    fun setProxyHost(context: Context, host: String) = RenTorManager.setProxyHost(context, host)
+
+    fun getProxyPort(context: Context): Int = RenTorManager.getProxyPort(context)
+
+    fun setProxyPort(context: Context, port: Int) = RenTorManager.setProxyPort(context, port)
+
+    fun isBlockGeolocation(context: Context): Boolean = RenTorManager.isBlockGeolocation(context)
+
+    fun setBlockGeolocation(context: Context, enabled: Boolean) = RenTorManager.setBlockGeolocation(context, enabled)
 
     fun applyProxyOverride(context: Context, onComplete: ((Boolean) -> Unit)? = null) {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
-            Log.w(TAG, "Proxy override is not supported on this Android WebView version.")
-            status = TorStatus.ERROR
-            onComplete?.invoke(false)
-            return
-        }
-
-        val host = getProxyHost(context)
-        val port = getProxyPort(context)
-        status = TorStatus.CONNECTING
-
-        try {
-            // Strict Tor Routing: NO .addDirect() to prevent any real IP leaks!
-            val proxyConfig = ProxyConfig.Builder()
-                .addProxyRule("socks5://$host:$port")
-                .addProxyRule("socks://$host:$port")
-                .build()
-
-            ProxyController.getInstance().setProxyOverride(
-                proxyConfig,
-                { runnable -> runnable.run() },
-                {
-                    status = TorStatus.CONNECTED
-                    if (isBlockGeolocation(context)) {
-                        GeolocationPermissions.getInstance().clearAll()
-                    }
-                    Log.d(TAG, "Tor Proxy strictly applied to WebView: socks5://$host:$port (No Direct Fallback)")
-                    onComplete?.invoke(true)
-                }
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Error applying Tor Proxy override", e)
-            status = TorStatus.ERROR
-            onComplete?.invoke(false)
-        }
+        RenTorManager.applyProxyOverride(context, onComplete)
     }
 
-    fun clearProxyOverride(onComplete: ((Boolean) -> Unit)? = null) {
-        if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
-            status = TorStatus.DISCONNECTED
-            onComplete?.invoke(true)
-            return
-        }
-
-        try {
-            ProxyController.getInstance().clearProxyOverride(
-                { runnable -> runnable.run() },
-                {
-                    status = TorStatus.DISCONNECTED
-                    Log.d(TAG, "Tor Proxy cleared from WebView.")
-                    onComplete?.invoke(true)
-                }
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "Error clearing Tor Proxy override", e)
-            status = TorStatus.DISCONNECTED
-            onComplete?.invoke(false)
-        }
+    fun clearProxyOverride(context: Context? = null, onComplete: ((Boolean) -> Unit)? = null) {
+        RenTorManager.clearProxyOverride(context, onComplete)
     }
 
     fun toggleTor(
@@ -134,44 +66,14 @@ object TorManager {
         onProgress: ((Int, String) -> Unit)? = null,
         onComplete: ((Boolean, Boolean) -> Unit)? = null
     ) {
-        val newEnabled = !isTorEnabled(context)
-        setTorEnabled(context, newEnabled)
+        RenTorManager.toggleTor(context, onProgress, onComplete)
+    }
 
-        if (newEnabled) {
-            status = TorStatus.CONNECTING
-            TorEngine.startTor(
-                context = context,
-                onProgress = { progress, msg ->
-                    onProgress?.invoke(progress, msg)
-                },
-                onComplete = { success, _ ->
-                    if (success) {
-                        applyProxyOverride(context) { proxySuccess ->
-                            onComplete?.invoke(true, proxySuccess)
-                        }
-                    } else {
-                        // Even if daemon startup is in fallback, apply proxy override so connection is locked to Tor port
-                        applyProxyOverride(context) { proxySuccess ->
-                            onComplete?.invoke(true, proxySuccess)
-                        }
-                    }
-                }
-            )
-        } else {
-            TorEngine.stopTor(context)
-            clearProxyOverride { success ->
-                onComplete?.invoke(false, success)
-            }
-        }
+    fun renewIdentity(onResult: (Boolean, String) -> Unit) {
+        RenTorManager.renewIdentity(onResult)
     }
 
     fun initAtStartup(context: Context) {
-        if (isTorEnabled(context)) {
-            TorEngine.startTor(context) { success, _ ->
-                if (success) {
-                    applyProxyOverride(context)
-                }
-            }
-        }
+        RenTorManager.initAtStartup(context)
     }
 }

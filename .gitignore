@@ -14,3 +14,4 @@
 *.apk
 *.aab
 app/release/
+*.log

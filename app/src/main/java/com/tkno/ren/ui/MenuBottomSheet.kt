@@ -40,6 +40,7 @@ import com.tkno.ren.util.ScriptManager
 import com.tkno.ren.util.TorManager
 import com.tkno.ren.util.TranslationManager
 import com.tkno.ren.util.UserAgentManager
+import com.tkno.ren.util.WarpManager
 
 class MenuBottomSheet(
     context: Context,
@@ -49,12 +50,19 @@ class MenuBottomSheet(
     private val onExit: () -> Unit,
     private val onClearData: () -> Unit = {},
     private val onOpenHistory: (() -> Unit)? = null,
+    private val onOpenBookmarks: (() -> Unit)? = null,
+    private val onToggleBookmark: (() -> Unit)? = null,
+    private val isCurrentPageBookmarked: Boolean = false,
     private val onToggleUserAgent: ((Boolean) -> Unit)? = null,
     private val onOpenUserAgentSettings: (() -> Unit)? = null,
     private val onOpenAdBlockingSettings: (() -> Unit)? = null,
+    private val onToggleAdBlock: ((Boolean) -> Unit)? = null,
     private val onOpenTorSettings: (() -> Unit)? = null,
     private val onToggleTor: ((Boolean) -> Unit)? = null,
     private val isTorActive: Boolean = TorManager.isTorEnabled(context),
+    private val onOpenWarpSettings: (() -> Unit)? = null,
+    private val onToggleWarp: ((Boolean) -> Unit)? = null,
+    private val isWarpActive: Boolean = WarpManager.isWarpEnabled(context),
     private val onToggleIncognito: (() -> Unit)? = null,
     private val isIncognitoActive: Boolean = false,
     private val isDesktopSiteActive: Boolean = false,
@@ -76,6 +84,8 @@ class MenuBottomSheet(
     private val onOpenScriptsSettings: (() -> Unit)? = null,
     private val onToggleScripts: ((Boolean) -> Unit)? = null,
     private val onOpenQrCode: (() -> Unit)? = null,
+    private val onAddToHomeScreen: (() -> Unit)? = null,
+    private val onOpenWith: (() -> Unit)? = null,
     private val onTextSizeChanged: ((Int) -> Unit)? = null,
     private val onTranslatePage: ((String) -> Unit)? = null,
     private val onRestoreOriginalPage: (() -> Unit)? = null
@@ -107,8 +117,8 @@ class MenuBottomSheet(
         private const val KEY_MENU_ORDER = "menu_custom_items_order"
 
         private val DEFAULT_MENU_ORDER = listOf(
-            "incognito", "menu", "ad_blocking", "tor_network", "extensions", "sandbox",
-            "clear_data", "exit", "share", "scripts", "add_favorite", "downloads",
+            "incognito", "menu", "ad_blocking", "tor_network", "cloudflare_warp", "extensions", "sandbox",
+            "clear_data", "exit", "share", "scripts", "add_favorite", "bookmarks", "downloads",
             "user_agent", "find_in_page", "translate", "desktop_site", "night_mode",
             "save", "qr_code", "add_to_home", "orientation", "text_size",
             "customize_menu", "site_config", "reader_mode", "print", "open_with"
@@ -147,13 +157,15 @@ class MenuBottomSheet(
             "menu" to BrowserMenuItem("menu", "Menu", R.drawable.ic_menu, isTogglable = false),
             "ad_blocking" to BrowserMenuItem("ad_blocking", "Ad blocking", R.drawable.ic_ad_blocking, isSelected = isAdBlockActive),
             "tor_network" to BrowserMenuItem("tor_network", "Tor network", R.drawable.ic_tor_network, isSelected = isTorActive),
+            "cloudflare_warp" to BrowserMenuItem("cloudflare_warp", "Cloudflare\nWARP", R.drawable.ic_cloudflare_warp, isSelected = isWarpActive),
             "extensions" to BrowserMenuItem("extensions", "Extensions", R.drawable.ic_extension, isTogglable = false, isEnabled = false),
             "sandbox" to BrowserMenuItem("sandbox", "Sandbox", R.drawable.ic_sandbox, isSelected = isSandboxActive),
             "clear_data" to BrowserMenuItem("clear_data", "Clear data", R.drawable.ic_clear_data),
             "exit" to BrowserMenuItem("exit", "Exit", R.drawable.ic_power, isTogglable = false),
             "share" to BrowserMenuItem("share", "Share", R.drawable.ic_share),
             "scripts" to BrowserMenuItem("scripts", "Scripts", R.drawable.ic_scripts, isSelected = isScriptsActive),
-            "add_favorite" to BrowserMenuItem("add_favorite", "Favorite", R.drawable.ic_add_favorite),
+            "add_favorite" to BrowserMenuItem("add_favorite", "Favorite", R.drawable.ic_add_favorite, isSelected = isCurrentPageBookmarked),
+            "bookmarks" to BrowserMenuItem("bookmarks", "Bookmarks", R.drawable.ic_bookmarks, isTogglable = false),
             "downloads" to BrowserMenuItem("downloads", "Downloads", R.drawable.ic_downloads),
             "user_agent" to BrowserMenuItem("user_agent", "User-agent", R.drawable.ic_user_agent, isSelected = isUaActive),
             "find_in_page" to BrowserMenuItem("find_in_page", "Find in\npage", R.drawable.ic_find_in_page),
@@ -303,6 +315,9 @@ class MenuBottomSheet(
                     } else if (item.id == "tor_network") {
                         dismiss()
                         onOpenTorSettings?.invoke()
+                    } else if (item.id == "cloudflare_warp") {
+                        dismiss()
+                        onOpenWarpSettings?.invoke()
                     } else if (item.id == "sandbox") {
                         dismiss()
                         onOpenSandboxSettings?.invoke()
@@ -1041,6 +1056,18 @@ class MenuBottomSheet(
                 dismiss()
                 onOpenDownloads?.invoke()
             }
+            "bookmarks" -> {
+                dismiss()
+                onOpenBookmarks?.invoke()
+            }
+            "add_favorite" -> {
+                dismiss()
+                if (onToggleBookmark != null) {
+                    onToggleBookmark.invoke()
+                } else {
+                    onOpenBookmarks?.invoke()
+                }
+            }
             "find_in_page" -> {
                 dismiss()
                 onFindInPage?.invoke()
@@ -1077,12 +1104,34 @@ class MenuBottomSheet(
                     }
                 )
             }
+            "cloudflare_warp" -> {
+                val willEnable = !item.isSelected
+                item.isSelected = willEnable
+                if (willEnable) {
+                    Toast.makeText(context, "Connecting to Cloudflare WARP...", Toast.LENGTH_SHORT).show()
+                }
+                WarpManager.toggleWarp(
+                    context = context,
+                    onProgress = { _, _ -> },
+                    onComplete = { enabled, success, errorMsg ->
+                        item.isSelected = enabled
+                        val msg = if (enabled) {
+                            if (success) context.getString(R.string.cloudflare_warp_enabled) else "Cloudflare WARP proxy locked"
+                        } else {
+                            errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                        }
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        onToggleWarp?.invoke(enabled)
+                    }
+                )
+            }
             "ad_blocking" -> {
                 val newEnabled = !item.isSelected
                 item.isSelected = newEnabled
                 AdBlockManager.setAdBlockEnabled(context, newEnabled)
                 val msg = if (newEnabled) "Ad blocking enabled" else "Ad blocking disabled"
                 Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                onToggleAdBlock?.invoke(newEnabled)
             }
             "user_agent" -> {
                 val newEnabled = !item.isSelected
@@ -1134,6 +1183,14 @@ class MenuBottomSheet(
                 } else {
                     onOpenQrCode?.invoke()
                 }
+            }
+            "add_to_home" -> {
+                dismiss()
+                onAddToHomeScreen?.invoke()
+            }
+            "open_with" -> {
+                dismiss()
+                onOpenWith?.invoke()
             }
             "customize_menu" -> {
                 showCustomizeMenuView()

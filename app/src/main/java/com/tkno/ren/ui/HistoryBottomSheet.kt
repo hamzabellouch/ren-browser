@@ -87,6 +87,25 @@ class HistoryBottomSheet(
             )
         }
 
+        val refreshBtn = ImageView(context).apply {
+            val size = dp(32)
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                marginEnd = dp(4)
+            }
+            val p = dp(6)
+            setPadding(p, p, p, p)
+            setImageResource(R.drawable.ic_reload)
+            setColorFilter(ContextCompat.getColor(context, R.color.icon_inactive))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { view ->
+                view.animate().rotationBy(360f).setDuration(400).start()
+                refreshList()
+                Toast.makeText(context, context.getString(R.string.history_refreshed), Toast.LENGTH_SHORT).show()
+            }
+        }
+        actionsLayout.addView(refreshBtn)
+
         val clearAllText = TextView(context).apply {
             text = "CLEAR"
             textSize = 13f
@@ -118,12 +137,6 @@ class HistoryBottomSheet(
         header.addView(actionsLayout)
         root.addView(header)
 
-        // Divider
-        val divider = View(context).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
-            setBackgroundColor(ContextCompat.getColor(context, R.color.divider_color))
-        }
-        root.addView(divider)
 
         // Scrollable Content
         val scrollView = ScrollView(context).apply {

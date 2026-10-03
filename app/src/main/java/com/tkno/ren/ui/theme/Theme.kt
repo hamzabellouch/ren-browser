@@ -31,7 +31,7 @@ object ThemeManager {
     var darkThemeMode by mutableIntStateOf(0)
         private set
 
-    var dynamicColor by mutableStateOf(false)
+    var dynamicColor by mutableStateOf(true)
         private set
 
     var isIncognitoActive by mutableStateOf(false)
@@ -47,7 +47,7 @@ object ThemeManager {
         val appContext = context.applicationContext
         val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         darkThemeMode = prefs.getInt(KEY_DARK_THEME, 0)
-        dynamicColor = prefs.getBoolean(KEY_DYNAMIC_COLOR, false)
+        dynamicColor = prefs.getBoolean(KEY_DYNAMIC_COLOR, true)
 
         applyNightMode(darkThemeMode)
 
@@ -62,7 +62,7 @@ object ThemeManager {
                         }
                     }
                     KEY_DYNAMIC_COLOR -> {
-                        dynamicColor = sp.getBoolean(KEY_DYNAMIC_COLOR, false)
+                        dynamicColor = sp.getBoolean(KEY_DYNAMIC_COLOR, true)
                     }
                 }
             }
@@ -100,7 +100,7 @@ object ThemeManager {
         val appContext = context.applicationContext
         val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val darkThemePref = prefs.getInt(KEY_DARK_THEME, 0)
-        val isDynamic = prefs.getBoolean(KEY_DYNAMIC_COLOR, false)
+        val isDynamic = prefs.getBoolean(KEY_DYNAMIC_COLOR, true)
         val isSystemDark = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
         val isDark = when (darkThemePref) {
             1 -> true
