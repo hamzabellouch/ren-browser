@@ -17,6 +17,16 @@ enum class TorStatus {
  * Legacy compatibility delegate for [RenTorManager].
  */
 object TorManager {
+    init {
+        RenTorManager.onBeforeTorEnable = { context ->
+            if (WarpManager.isWarpEnabled(context)) {
+                WarpManager.setWarpEnabled(context, false)
+                CloudflareEngine.stop()
+                WarpManager.clearProxyOverride(context)
+            }
+        }
+    }
+
     val status: TorStatus
         get() = when (RenTorEngine.state.value.status) {
             RenTorStatus.DISCONNECTED, RenTorStatus.STOPPING -> TorStatus.DISCONNECTED

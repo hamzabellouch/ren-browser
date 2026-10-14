@@ -1,7 +1,9 @@
 package com.tkno.ren.ui
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -69,6 +72,11 @@ import kotlin.math.abs
 
 import androidx.compose.runtime.mutableIntStateOf
 
+enum class TabsTransitionType {
+    ENTER_GRID,
+    EXIT_GRID
+}
+
 @Composable
 fun TabsGridView(
     tabs: List<WebTab>,
@@ -77,9 +85,10 @@ fun TabsGridView(
     onCloseTab: (WebTab) -> Unit,
     onNewTab: (isIncognito: Boolean) -> Unit,
     onCloseAllIncognito: (() -> Unit)? = null,
+    openToken: Long = 0L,
     modifier: Modifier = Modifier
 ) {
-    val activeTab = tabs.find { it.id == activeTabId }
+    val activeTab = tabs.find { it.id == activeTabId } ?: tabs.firstOrNull()
     var selectedMode by remember(activeTab?.isIncognito) {
         mutableIntStateOf(if (activeTab?.isIncognito == true) 1 else 0) // 0: Normal, 1: Incognito
     }
@@ -88,6 +97,72 @@ fun TabsGridView(
     val incognitoTabs = tabs.filter { it.isIncognito }
     val currentTabs = if (selectedMode == 1) incognitoTabs else normalTabs
 
+    // Distinctive Animation State between Full View and Thumbnail Card
+    var isTransitioning by remember { mutableStateOf(false) }
+    var transitionType by remember { mutableStateOf(TabsTransitionType.ENTER_GRID) }
+    val animProgress = remember { Animatable(1f) }
+    var animatingTab by remember { mutableStateOf<WebTab?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    LaunchedEffect(openToken) {
+        if (openToken > 0L) {
+            animatingTab = tabs.find { it.id == activeTabId } ?: tabs.firstOrNull()
+            transitionType = TabsTransitionType.ENTER_GRID
+            isTransitioning = true
+            animProgress.snapTo(0f)
+            animProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = 350,
+                    easing = CubicBezierEasing(0.2f, 0.0f, 0.0f, 1.0f)
+                )
+            )
+            isTransitioning = false
+        }
+    }
+
+    val handleTabSelect: (WebTab) -> Unit = { tab ->
+        if (!isTransitioning) {
+            animatingTab = tab
+            transitionType = TabsTransitionType.EXIT_GRID
+            isTransitioning = true
+            coroutineScope.launch {
+                animProgress.snapTo(0f)
+                animProgress.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(
+                        durationMillis = 280,
+                        easing = CubicBezierEasing(0.2f, 0.0f, 0.0f, 1.0f)
+                    )
+                )
+                isTransitioning = false
+                onSelectTab(tab)
+            }
+        }
+    }
+
+    BackHandler(enabled = true) {
+        val tab = tabs.find { it.id == activeTabId } ?: tabs.firstOrNull()
+        if (tab != null) {
+            handleTabSelect(tab)
+        } else {
+            onNewTab(false)
+        }
+    }
+
+    val t = animProgress.value
+    val gridFactor = when {
+        !isTransitioning -> 1f
+        transitionType == TabsTransitionType.ENTER_GRID -> t
+        else -> 1f - t
+    }
+
+    val topRowAlpha = gridFactor.coerceIn(0f, 1f)
+    val topRowTranslationY = with(density) { ((-40) * (1f - gridFactor)).dp.toPx() }
+    val gridAlpha = (gridFactor * 1.3f).coerceIn(0f, 1f)
+    val gridScale = 0.92f + (0.08f * gridFactor)
+
     RenTheme(isIncognito = selectedMode == 1) {
         Box(
             modifier = modifier
@@ -95,23 +170,39 @@ fun TabsGridView(
                 .background(MaterialTheme.colorScheme.background)
                 .statusBarsPadding()
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Top Segmented Switcher & Action Buttons
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        alpha = gridAlpha
+                        scaleX = gridScale
+                        scaleY = gridScale
+                    }
+            ) {
+                // Top Segmented Switcher & Action Buttons (48.dp Capsules matching Sandbox & Search)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .graphicsLayer {
+                            alpha = topRowAlpha
+                            translationY = topRowTranslationY
+                        },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Switcher Container (Normal vs Incognito)
+                    // Switcher Container (Normal vs Incognito) - 48.dp Capsule
                     Surface(
                         shape = RoundedCornerShape(percent = 50),
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        shadowElevation = 2.dp,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        modifier = Modifier.height(48.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(3.dp),
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .padding(4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
@@ -120,23 +211,24 @@ fun TabsGridView(
                                 shape = RoundedCornerShape(percent = 50),
                                 color = if (selectedMode == 0) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
                                 modifier = Modifier
+                                    .fillMaxHeight()
                                     .clip(RoundedCornerShape(percent = 50))
                                     .clickable { selectedMode = 0 }
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    modifier = Modifier.padding(horizontal = 14.dp)
                                 ) {
                                     Icon(
                                         imageVector = Md3TabOutlined,
                                         contentDescription = "Normal tabs",
                                         tint = if (selectedMode == 0) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(19.dp)
                                     )
                                     Text(
                                         text = "${normalTabs.size}",
-                                        fontSize = 12.5.sp,
+                                        fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = if (selectedMode == 0) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -148,23 +240,24 @@ fun TabsGridView(
                                 shape = RoundedCornerShape(percent = 50),
                                 color = if (selectedMode == 1) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
                                 modifier = Modifier
+                                    .fillMaxHeight()
                                     .clip(RoundedCornerShape(percent = 50))
                                     .clickable { selectedMode = 1 }
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    modifier = Modifier.padding(horizontal = 14.dp)
                                 ) {
                                     Icon(
                                         painter = painterResource(id = R.drawable.ic_incognito_glasses),
                                         contentDescription = "Incognito tabs",
                                         tint = if (selectedMode == 1) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(19.dp)
                                     )
                                     Text(
                                         text = "${incognitoTabs.size}",
-                                        fontSize = 12.5.sp,
+                                        fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = if (selectedMode == 1) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -182,25 +275,30 @@ fun TabsGridView(
                             Surface(
                                 shape = RoundedCornerShape(percent = 50),
                                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                shadowElevation = 2.dp,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                                 modifier = Modifier
+                                    .height(48.dp)
                                     .clip(RoundedCornerShape(percent = 50))
                                     .clickable { onCloseAllIncognito() }
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier
+                                        .fillMaxHeight()
+                                        .padding(horizontal = 14.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
                                         contentDescription = "Close all incognito",
                                         tint = MaterialTheme.colorScheme.error,
-                                        modifier = Modifier.size(16.dp)
+                                        modifier = Modifier.size(18.dp)
                                     )
+                                    Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = "Close all",
-                                        fontSize = 12.sp,
+                                        fontSize = 13.5.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.error
                                     )
@@ -208,30 +306,35 @@ fun TabsGridView(
                             }
                         }
 
-                        // Plus (+) Button to Add New Tab in Current Mode
+                        // Plus (+) Button to Add New Tab in Current Mode - 48.dp Capsule
                         Surface(
                             shape = RoundedCornerShape(percent = 50),
                             color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            shadowElevation = 2.dp,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                             modifier = Modifier
+                                .height(48.dp)
                                 .clip(RoundedCornerShape(percent = 50))
                                 .clickable { onNewTab(selectedMode == 1) }
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                horizontalArrangement = Arrangement.Center,
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(horizontal = 16.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Add,
                                     contentDescription = "New tab",
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = if (selectedMode == 1) "New incognito" else "New tab",
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
@@ -318,10 +421,133 @@ fun TabsGridView(
                             TabGridCard(
                                 tab = tab,
                                 isActive = isActive,
-                                onSelect = { onSelectTab(tab) },
+                                onSelect = { handleTabSelect(tab) },
                                 onClose = { onCloseTab(tab) },
                                 modifier = Modifier.animateItem()
                             )
+                        }
+                    }
+                }
+            }
+
+            // Transition Animation Overlay (Full-screen <-> Thumbnail Card)
+            if (isTransitioning && animatingTab != null) {
+                val transTab = animatingTab!!
+                val cardScale = 1f - (0.52f * gridFactor)
+                val cardCornerRadius = (20 * gridFactor).dp
+                val cardTranslationY = with(density) { (120 * gridFactor).dp.toPx() }
+                val headerAlpha = (gridFactor * 1.5f).coerceIn(0f, 1f)
+                val overlayAlpha = if (transitionType == TabsTransitionType.ENTER_GRID) {
+                    if (gridFactor > 0.85f) ((1f - gridFactor) / 0.15f).coerceIn(0f, 1f) else 1f
+                } else {
+                    if (gridFactor < 0.95f) 1f else ((1f - gridFactor) / 0.05f).coerceIn(0f, 1f)
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            alpha = overlayAlpha
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(cardCornerRadius),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shadowElevation = (12 * gridFactor).dp,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = gridFactor)),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = cardScale
+                                scaleY = cardScale
+                                translationY = cardTranslationY
+                            }
+                            .clip(RoundedCornerShape(cardCornerRadius))
+                    ) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            // Header bar (fades in as it shrinks to card)
+                            if (headerAlpha > 0.01f) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(38.dp)
+                                        .graphicsLayer { alpha = headerAlpha }
+                                        .background(
+                                            MaterialTheme.colorScheme.primaryContainer,
+                                            RoundedCornerShape(topStart = cardCornerRadius, topEnd = cardCornerRadius)
+                                        )
+                                        .padding(horizontal = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (transTab.isIncognito) {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_incognito_glasses),
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    } else {
+                                        Icon(
+                                            painter = painterResource(R.drawable.ic_globe),
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = transTab.title.ifBlank {
+                                            if (transTab.isIncognito) "Incognito" else "Blank page"
+                                        },
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+
+                            // Preview Snapshot Body
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                            ) {
+                                if (transTab.snapshot != null) {
+                                    Image(
+                                        bitmap = transTab.snapshot!!.asImageBitmap(),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        alignment = Alignment.TopCenter,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth(0.9f)
+                                                .height(20.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth(0.7f)
+                                                .height(20.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

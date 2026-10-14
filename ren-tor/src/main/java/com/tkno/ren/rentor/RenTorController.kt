@@ -131,6 +131,14 @@ class RenTorController(
     }
 
     /**
+     * Signals Tor daemon to shutdown cleanly.
+     */
+    suspend fun signalShutdown(): Boolean = withContext(Dispatchers.IO) {
+        val result = sendCommand("SIGNAL SHUTDOWN")
+        result.any { it.startsWith("250") }
+    }
+
+    /**
      * Queries active circuits from Tor daemon.
      */
     suspend fun getCircuits(): List<RenTorCircuit> = withContext(Dispatchers.IO) {
@@ -139,7 +147,6 @@ class RenTorController(
 
         for (line in lines) {
             if (line.startsWith("250") || line == ".") continue
-            // Format: 1 BUILT $FINGERPRINT~Name,$FINGERPRINT~Name PURPOSE=GENERAL ...
             val parts = line.split(" ")
             if (parts.size >= 2) {
                 val id = parts[0]

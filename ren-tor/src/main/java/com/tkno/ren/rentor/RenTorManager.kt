@@ -8,7 +8,6 @@ import androidx.core.content.ContextCompat
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
-import com.tkno.ren.util.WarpManager
 import java.util.concurrent.Executor
 
 /**
@@ -35,6 +34,11 @@ object RenTorManager {
     private const val DEFAULT_PORT = 9050
     private const val DEFAULT_CONTROL_PORT = 9051
     private const val DEFAULT_DNS_PORT = 9053
+
+    /**
+     * Optional hook invoked before Tor is enabled (e.g. to disable conflicting proxy managers like WARP).
+     */
+    var onBeforeTorEnable: ((Context) -> Unit)? = null
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -233,9 +237,12 @@ object RenTorManager {
         setTorEnabled(context, newEnabled)
 
         if (newEnabled) {
-            // Ensure WARP is disabled to prevent proxy collisions
-            if (WarpManager.isWarpEnabled(context)) {
-                WarpManager.setWarpEnabled(context, false)
+            onBeforeTorEnable?.invoke(context)
+
+            // Ensure conflicting proxy modes (like WARP) are disabled
+            val warpPrefs = context.getSharedPreferences("ren_warp_prefs", Context.MODE_PRIVATE)
+            if (warpPrefs.getBoolean("warp_enabled", false)) {
+                warpPrefs.edit().putBoolean("warp_enabled", false).apply()
             }
 
             val settings = getSettings(context)

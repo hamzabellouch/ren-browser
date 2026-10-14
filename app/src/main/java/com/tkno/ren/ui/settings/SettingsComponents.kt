@@ -2,6 +2,7 @@ package com.tkno.ren.ui.settings
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.filled.ToggleOn
 import androidx.compose.material.icons.outlined.ToggleOff
 import androidx.compose.material3.AlertDialog
@@ -52,6 +54,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.painter.Painter
@@ -486,10 +489,11 @@ fun PreferenceSwitch(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.38f)
             .toggleable(
                 value = isChecked,
                 enabled = enabled,
-                onValueChange = { onClick() },
+                onValueChange = { if (enabled) onClick() },
                 interactionSource = interactionSource,
                 indication = androidx.compose.foundation.LocalIndication.current,
             )
@@ -545,6 +549,58 @@ fun PreferenceSwitch(
                 enabled = enabled,
             )
         }
+    }
+}
+
+@Composable
+fun PreferenceSwitchWithContainer(
+    title: String,
+    icon: ImageVector? = null,
+    isChecked: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .clip(MaterialTheme.shapes.extraLarge)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .toggleable(
+                value = isChecked,
+                onValueChange = { onClick() },
+                interactionSource = interactionSource,
+                indication = androidx.compose.foundation.LocalIndication.current,
+            )
+            .padding(horizontal = 16.dp, vertical = 20.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        icon?.let {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.padding(start = 8.dp, end = 16.dp).size(24.dp),
+                tint = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = if (icon == null) 12.dp else 0.dp, end = 12.dp)
+        ) {
+            Text(
+                text = title,
+                maxLines = 2,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        SwitchWithIcons(
+            isChecked = isChecked,
+            onCheckedChange = null,
+            interactionSource = interactionSource,
+            modifier = Modifier.padding(start = 12.dp, end = 6.dp),
+        )
     }
 }
 
@@ -641,8 +697,11 @@ fun PreferenceSwitchWithDivider(
     onCheckedChange: (Boolean) -> Unit = onChecked,
 ) {
     Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth()
+        onClick = { if (isSwitchEnabled) onClick() },
+        enabled = isSwitchEnabled,
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (isSwitchEnabled) 1f else 0.38f)
     ) {
         Row(
             modifier = Modifier

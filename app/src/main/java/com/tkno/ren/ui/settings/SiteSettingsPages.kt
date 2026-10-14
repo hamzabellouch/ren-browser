@@ -85,6 +85,7 @@ fun SiteConfigurationPage(
     var isIntrusiveAdsBlocked by remember { mutableStateOf(SiteConfigManager.isIntrusiveAdsBlocked(context)) }
     var isProtectedContentOn by remember { mutableStateOf(SiteConfigManager.isProtectedContentEnabled(context)) }
     var isInsecureContentBlocked by remember { mutableStateOf(SiteConfigManager.isInsecureContentBlocked(context)) }
+    var isShowFullUrlOn by remember { mutableStateOf(SiteConfigManager.isShowFullUrlEnabled(context)) }
 
     val dnsSummary = remember { SiteConfigManager.getEffectiveDnsSummary(context) }
     val cookiesSummary = remember {
@@ -265,6 +266,24 @@ fun SiteConfigurationPage(
                         val nv = !isInsecureContentBlocked
                         isInsecureContentBlocked = nv
                         SiteConfigManager.setInsecureContentBlocked(context, nv)
+                    }
+                )
+            }
+
+            // Section 5: Address Bar & Navigation
+            item {
+                PreferenceSubtitle(text = stringResource(R.string.address_bar_and_navigation))
+            }
+            item {
+                PreferenceSwitch(
+                    title = stringResource(R.string.show_full_urls),
+                    description = stringResource(R.string.show_full_urls_desc),
+                    icon = Icons.Outlined.Http,
+                    isChecked = isShowFullUrlOn,
+                    onClick = {
+                        val nv = !isShowFullUrlOn
+                        isShowFullUrlOn = nv
+                        SiteConfigManager.setShowFullUrlEnabled(context, nv)
                     }
                 )
             }

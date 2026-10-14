@@ -135,8 +135,10 @@ import com.tkno.ren.util.FilterSubscription
 import com.tkno.ren.util.SandboxManager
 import com.tkno.ren.util.ScriptManager
 import com.tkno.ren.util.SearchEngineManager
+import com.tkno.ren.util.SiteConfigManager
 import com.tkno.ren.util.TorEngine
 import com.tkno.ren.util.TorManager
+import androidx.compose.material.icons.outlined.Http
 import com.tkno.ren.rentor.BridgeType
 import com.tkno.ren.rentor.RenTorEngine
 import com.tkno.ren.rentor.RenTorManager
@@ -979,6 +981,7 @@ fun NetworkIdentitySettingsPage(
     var isWarpEnabled by remember {
         mutableStateOf(WarpManager.isWarpEnabled(context))
     }
+    val isTorActive = remember { TorManager.isTorEnabled(context) }
 
     var showClearBrowsingDataDialog by remember { mutableStateOf(false) }
 
@@ -1008,22 +1011,31 @@ fun NetworkIdentitySettingsPage(
             item {
                 PreferenceSwitchWithDivider(
                     title = stringResource(id = R.string.cloudflare_warp),
-                    description = if (isWarpEnabled)
+                    description = if (isTorActive)
+                        stringResource(id = R.string.warp_unavailable_tor_active)
+                    else if (isWarpEnabled)
                         stringResource(id = R.string.cloudflare_warp_enabled)
                     else
                         stringResource(id = R.string.cloudflare_warp_desc),
                     icon = painterResource(id = R.drawable.ic_cloudflare_warp),
                     isChecked = isWarpEnabled,
-                    onClick = { onNavigateTo("warp") },
+                    isSwitchEnabled = !isTorActive,
+                    onClick = {
+                        if (!isTorActive) {
+                            onNavigateTo("warp")
+                        }
+                    },
                     onCheckedChange = { checked ->
-                        WarpManager.toggleWarp(context) { enabled, success, errorMsg ->
-                            isWarpEnabled = enabled
-                            val msg = if (enabled) {
-                                if (success) context.getString(R.string.cloudflare_warp_enabled) else "Failed to apply Cloudflare WARP proxy"
-                            } else {
-                                errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                        if (!isTorActive) {
+                            WarpManager.toggleWarp(context) { enabled, success, errorMsg ->
+                                isWarpEnabled = enabled
+                                val msg = if (enabled) {
+                                    if (success) context.getString(R.string.cloudflare_warp_enabled) else "Failed to apply Cloudflare WARP proxy"
+                                } else {
+                                    errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                                }
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             }
-                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }
                     }
                 )
@@ -1515,6 +1527,23 @@ fun InterfaceInteractionSettingsPage(onBack: () -> Unit) {
         }
     }
 
+    var isShowFullUrlOn by remember { 
+        mutableStateOf(SiteConfigManager.isShowFullUrlEnabled(context)) 
+    }
+
+    val siteConfigPrefs = remember { SiteConfigManager.getPrefs(context) }
+    DisposableEffect(siteConfigPrefs) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { p, key ->
+            if (key == SiteConfigManager.KEY_SHOW_FULL_URL) {
+                isShowFullUrlOn = p.getBoolean(SiteConfigManager.KEY_SHOW_FULL_URL, false)
+            }
+        }
+        siteConfigPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            siteConfigPrefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
     BasePreferencePage(
         title = stringResource(id = R.string.interface_interaction),
         onBack = onBack,
@@ -1553,6 +1582,22 @@ fun InterfaceInteractionSettingsPage(onBack: () -> Unit) {
                     prefs.edit().putBoolean("use_classic_taskbar", newValue).apply()
                 }
             )
+
+            // عنوان فرعي لقسم شريط العناوين (Address Bar)
+            PreferenceSubtitle(text = stringResource(R.string.address_bar_and_navigation))
+
+            // 3. خيار إظهار عنوان URL الكامل
+            PreferenceSwitch(
+                title = stringResource(R.string.show_full_urls),
+                description = stringResource(R.string.show_full_urls_desc),
+                icon = Icons.Outlined.Http,
+                isChecked = isShowFullUrlOn,
+                onClick = {
+                    val newValue = !isShowFullUrlOn
+                    isShowFullUrlOn = newValue
+                    SiteConfigManager.setShowFullUrlEnabled(context, newValue)
+                }
+            )
         }
     }
 }
@@ -1585,25 +1630,35 @@ fun PrivacySettingsPage(
             item {
                 PreferenceSwitchWithDivider(
                     title = stringResource(id = R.string.cloudflare_warp),
-                    description = if (isWarpEnabled)
+                    description = if (isTorEnabled)
+                        stringResource(id = R.string.warp_unavailable_tor_active)
+                    else if (isWarpEnabled)
                         stringResource(id = R.string.cloudflare_warp_enabled)
                     else
                         stringResource(id = R.string.cloudflare_warp_desc),
                     icon = painterResource(id = R.drawable.ic_cloudflare_warp),
                     isChecked = isWarpEnabled,
+                    isSwitchEnabled = !isTorEnabled,
                     onCheckedChange = { checked ->
-                        WarpManager.toggleWarp(context) { enabled, success, errorMsg ->
-                            isWarpEnabled = enabled
-                            val msg = if (enabled) {
-                                if (success) context.getString(R.string.cloudflare_warp_enabled) else "Failed to apply WARP routing"
-                            } else {
-                                errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                        if (!isTorEnabled) {
+                            WarpManager.toggleWarp(context) { enabled, success, errorMsg ->
+                                isWarpEnabled = enabled
+                                if (enabled) {
+                                    isTorEnabled = false
+                                }
+                                val msg = if (enabled) {
+                                    if (success) context.getString(R.string.cloudflare_warp_enabled) else "Failed to apply WARP routing"
+                                } else {
+                                    errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                                }
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             }
-                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }
                     },
                     onClick = {
-                        onNavigateTo("warp")
+                        if (!isTorEnabled) {
+                            onNavigateTo("warp")
+                        }
                     }
                 )
             }
@@ -1614,21 +1669,35 @@ fun PrivacySettingsPage(
             item {
                 PreferenceSwitchWithDivider(
                     title = stringResource(id = R.string.tor_network),
+                    description = if (isWarpEnabled)
+                        stringResource(id = R.string.tor_unavailable_warp_active)
+                    else if (isTorEnabled)
+                        stringResource(id = R.string.tor_network_enabled)
+                    else
+                        stringResource(id = R.string.tor_network_desc),
                     icon = Icons.Outlined.VpnLock,
                     isChecked = isTorEnabled,
+                    isSwitchEnabled = !isWarpEnabled,
                     onCheckedChange = { checked ->
-                        TorManager.toggleTor(context) { enabled, success ->
-                            isTorEnabled = enabled
-                            val msg = if (enabled) {
-                                if (success) context.getString(R.string.tor_network_enabled) else "Failed to apply Tor proxy"
-                            } else {
-                                context.getString(R.string.tor_network_disabled)
+                        if (!isWarpEnabled) {
+                            TorManager.toggleTor(context) { enabled, success ->
+                                isTorEnabled = enabled
+                                if (enabled) {
+                                    isWarpEnabled = false
+                                }
+                                val msg = if (enabled) {
+                                    if (success) context.getString(R.string.tor_network_enabled) else "Failed to apply Tor proxy"
+                                } else {
+                                    context.getString(R.string.tor_network_disabled)
+                                }
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                             }
-                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                         }
                     },
                     onClick = {
-                        onNavigateTo("tor")
+                        if (!isWarpEnabled) {
+                            onNavigateTo("tor")
+                        }
                     }
                 )
             }
@@ -1691,6 +1760,7 @@ fun TorSettingsPage(
 ) {
     val context = LocalContext.current
     val engineState by RenTorEngine.state.collectAsState()
+    val isWarpActive = remember { WarpManager.isWarpEnabled(context) }
     var isTorEnabled by remember { mutableStateOf(RenTorManager.isTorEnabled(context)) }
     val proxyHost = remember { RenTorManager.getProxyHost(context) }
     var proxyPort by remember { mutableIntStateOf(RenTorManager.getProxyPort(context)) }
@@ -1736,7 +1806,9 @@ fun TorSettingsPage(
             item {
                 PreferenceSwitch(
                     title = stringResource(id = R.string.tor_network),
-                    description = if (isTorEnabled) {
+                    description = if (isWarpActive) {
+                        stringResource(id = R.string.tor_unavailable_warp_active)
+                    } else if (isTorEnabled) {
                         when (engineState.status) {
                             RenTorStatus.CONNECTED -> "✓ Ren-Tor Connected & Routing (SOCKS:$proxyPort)"
                             RenTorStatus.BOOTSTRAPPING -> "Bootstrapping circuits... (${engineState.bootstrapProgress}%)"
@@ -1749,16 +1821,19 @@ fun TorSettingsPage(
                         stringResource(id = R.string.tor_network_desc)
                     },
                     icon = Icons.Outlined.VpnLock,
+                    enabled = !isWarpActive,
                     isChecked = isTorEnabled,
                     onClick = {
-                        RenTorManager.toggleTor(context) { enabled, success ->
-                            isTorEnabled = enabled
-                            val msg = if (enabled) {
-                                if (success) context.getString(R.string.tor_network_enabled) else "Ren-Tor proxy locked (Routing via 127.0.0.1:$proxyPort)"
-                            } else {
-                                context.getString(R.string.tor_network_disabled)
+                        if (!isWarpActive) {
+                            RenTorManager.toggleTor(context) { enabled, success ->
+                                isTorEnabled = enabled
+                                val msg = if (enabled) {
+                                    if (success) context.getString(R.string.tor_network_enabled) else "Ren-Tor proxy locked (Routing via 127.0.0.1:$proxyPort)"
+                                } else {
+                                    context.getString(R.string.tor_network_disabled)
+                                }
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                             }
-                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                         }
                     }
                 )
@@ -2067,6 +2142,7 @@ fun WarpSettingsPage(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val isTorActive = remember { TorManager.isTorEnabled(context) }
     var isWarpEnabled by remember { mutableStateOf(WarpManager.isWarpEnabled(context)) }
     var proxyHost by remember { mutableStateOf(WarpManager.getProxyHost(context)) }
     var proxyPort by remember { mutableIntStateOf(WarpManager.getProxyPort(context)) }
@@ -2128,21 +2204,26 @@ fun WarpSettingsPage(
             item {
                 PreferenceSwitch(
                     title = stringResource(id = R.string.cloudflare_warp),
-                    description = if (isWarpEnabled)
+                    description = if (isTorActive)
+                        stringResource(id = R.string.warp_unavailable_tor_active)
+                    else if (isWarpEnabled)
                         stringResource(id = R.string.cloudflare_warp_enabled)
                     else
                         stringResource(id = R.string.cloudflare_warp_desc),
                     icon = painterResource(id = R.drawable.ic_cloudflare_warp),
+                    enabled = !isTorActive,
                     isChecked = isWarpEnabled,
                     onClick = {
-                        WarpManager.toggleWarp(context) { enabled, success, errorMsg ->
-                            isWarpEnabled = enabled
-                            val msg = if (enabled) {
-                                if (success) context.getString(R.string.cloudflare_warp_enabled) else "WARP proxy applied"
-                            } else {
-                                errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                        if (!isTorActive) {
+                            WarpManager.toggleWarp(context) { enabled, success, errorMsg ->
+                                isWarpEnabled = enabled
+                                val msg = if (enabled) {
+                                    if (success) context.getString(R.string.cloudflare_warp_enabled) else "WARP proxy applied"
+                                } else {
+                                    errorMsg ?: context.getString(R.string.cloudflare_warp_disabled)
+                                }
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             }
-                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }
                     }
                 )
@@ -3302,7 +3383,7 @@ fun AboutSettingsPage(onBack: () -> Unit) {
             item {
                 PreferenceItem(
                     title = "Ren Browser",
-                    description = "Version 0.0.2-beta (Material 3 Edition)",
+                    description = "Version 0.0.3-beta (Material 3 Edition)",
                     icon = Icons.Outlined.Info,
                     onClick = {}
                 )

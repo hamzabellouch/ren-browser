@@ -15,6 +15,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -55,11 +56,17 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import com.tkno.ren.ui.components.CustomIcons
+import com.tkno.ren.ui.components.Refresh
+import com.tkno.ren.ui.components.Close
 import org.json.JSONArray
 import org.json.JSONObject
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -87,12 +94,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -103,6 +112,7 @@ import com.tkno.ren.R
 import com.tkno.ren.util.SearchEngine
 import com.tkno.ren.util.SearchEngineManager
 import com.tkno.ren.util.SearchSuggestionManager
+import com.tkno.ren.util.SiteConfigManager
 import java.net.URI
 import kotlin.math.roundToInt
 
@@ -211,6 +221,7 @@ data class ShortcutItem(
     val letter: String? = null
 )
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreenView(
     isBrowsing: Boolean,
@@ -230,11 +241,15 @@ fun HomeScreenView(
     canGoForward: Boolean = false,
     onGoBack: () -> Unit = {},
     onGoForward: () -> Unit = {},
+    tabsCount: Int = 1,
+    onOpenTabs: () -> Unit = {},
+    onTabsLongClick: () -> Unit = {},
     isTaskbarVisible: Boolean = true,
     onToggleTaskbar: () -> Unit = {},
     onToggleFloatingBubble: () -> Unit = {},
     onBubblePositionChanged: (centerX: Float, centerY: Float, radius: Float) -> Unit = { _, _, _ -> },
     onSearchBarBoundsChanged: (left: Float, top: Float, right: Float, bottom: Float) -> Unit = { _, _, _, _ -> },
+    onTopNavButtonsBoundsChanged: (left: Float, top: Float, right: Float, bottom: Float) -> Unit = { _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -308,11 +323,26 @@ fun HomeScreenView(
         }
     }
 
+    val siteConfigPrefs = remember { SiteConfigManager.getPrefs(context) }
+    var showFullUrl by remember { mutableStateOf(SiteConfigManager.isShowFullUrlEnabled(context)) }
+
+    DisposableEffect(siteConfigPrefs) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { p, key ->
+            if (key == SiteConfigManager.KEY_SHOW_FULL_URL) {
+                showFullUrl = p.getBoolean(SiteConfigManager.KEY_SHOW_FULL_URL, false)
+            }
+        }
+        siteConfigPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose {
+            siteConfigPrefs.unregisterOnSharedPreferenceChangeListener(listener)
+        }
+    }
+
     // Sync searchTextFieldValue with currentUrl when browsing URL changes
-    LaunchedEffect(currentUrl, isBrowsing) {
+    LaunchedEffect(currentUrl, isBrowsing, showFullUrl) {
         if (isBrowsing && currentUrl.isNotBlank() && currentUrl != "about:blank") {
             searchTextFieldValue = TextFieldValue(
-                text = currentUrl,
+                text = SiteConfigManager.formatUrlForDisplay(currentUrl, showFullUrl),
                 selection = TextRange.Zero
             )
             showSearchEngines = false
@@ -416,7 +446,7 @@ fun HomeScreenView(
                     .padding(horizontal = 20.dp)
                     .padding(top = 44.dp, bottom = 100.dp)
             ) {
-                // Logo: "Ren" with Incognito Icon on the left side when in Incognito mode
+                // Logo: "Ren Browser" with Incognito Icon on the left side when in Incognito mode
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
@@ -433,14 +463,15 @@ fun HomeScreenView(
                         )
                     }
                     Text(
-                        text = "Ren",
+                        text = "Ren Browser",
                         style = TextStyle(
                             color = MaterialTheme.colorScheme.onBackground,
-                            fontSize = 44.sp,
+                            fontSize = 40.sp,
                             fontWeight = FontWeight.SemiBold,
                             letterSpacing = (-0.5).sp,
                             fontFamily = FontFamily.SansSerif
-                        )
+                        ),
+                        maxLines = 1
                     )
                 }
 
@@ -741,10 +772,112 @@ fun HomeScreenView(
         val currentY = lerp(barTopOffset, with(density) { bubbleDragY.toDp() }, bubbleProgress)
         val containerWidth = lerp(fullWidth, 52.dp, bubbleProgress)
         val containerHeight = lerp(barHeight, 52.dp, bubbleProgress)
+        // Navigation Action Circles Above Search Capsule (Back ⬅️, Forward ➡️)
+        val topNavButtonSize = 42.dp
+        val topNavButtonsGap = 8.dp
+        val showTopNavButtons = isBrowsing && !isFloatingBubbleMode && !isSearchFocused
+        val animatedTopNavButtonSize by animateDpAsState(
+            targetValue = if (showTopNavButtons) topNavButtonSize else 0.dp,
+            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            label = "topNavButtonsSize"
+        )
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
+        LaunchedEffect(showTopNavButtons) {
+            if (!showTopNavButtons) {
+                onTopNavButtonsBoundsChanged(0f, 0f, 0f, 0f)
+            }
+        }
+
+        if (animatedTopNavButtonSize > 1.dp && circleButtonsAlpha > 0.001f) {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Box(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                x = with(density) { currentX.toPx() }.roundToInt(),
+                                y = with(density) { (currentY - animatedTopNavButtonSize - topNavButtonsGap).toPx() }.roundToInt()
+                            )
+                        }
+                        .width(containerWidth)
+                        .height(animatedTopNavButtonSize)
+                        .alpha(circleButtonsAlpha),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .onGloballyPositioned { coordinates ->
+                                val bounds = coordinates.boundsInWindow()
+                                onTopNavButtonsBoundsChanged(bounds.left, bounds.top, bounds.right, bounds.bottom)
+                            },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Circle 1: Back Button (⬅️)
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = CircleShape,
+                            shadowElevation = if (isBrowsing) 8.dp else 4.dp,
+                            modifier = Modifier
+                                .size(animatedTopNavButtonSize)
+                                .clip(CircleShape)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    onGoBack()
+                                }
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = ArrowBackIcon,
+                                    contentDescription = "Back",
+                                    tint = if (canGoBack) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(buttonSpacing))
+
+                        // Circle 2: Forward Button (➡️)
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = CircleShape,
+                            shadowElevation = if (isBrowsing) 8.dp else 4.dp,
+                            modifier = Modifier
+                                .size(animatedTopNavButtonSize)
+                                .clip(CircleShape)
+                                .clickable(
+                                    enabled = canGoForward,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) {
+                                    onGoForward()
+                                }
+                        ) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = ArrowForwardIcon,
+                                    contentDescription = "Forward",
+                                    tint = if (canGoForward) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
                 .offset {
                     IntOffset(
                         x = with(density) { currentX.toPx() }.roundToInt(),
@@ -956,9 +1089,16 @@ fun HomeScreenView(
                                                     }
                                                 } else {
                                                     shouldSelectAllOnNextFocus = false
-                                                    searchTextFieldValue = searchTextFieldValue.copy(
-                                                        selection = TextRange.Zero
-                                                    )
+                                                    if (isBrowsing && currentUrl.isNotBlank() && currentUrl != "about:blank") {
+                                                        searchTextFieldValue = TextFieldValue(
+                                                            text = SiteConfigManager.formatUrlForDisplay(currentUrl, showFullUrl),
+                                                            selection = TextRange.Zero
+                                                        )
+                                                    } else {
+                                                        searchTextFieldValue = searchTextFieldValue.copy(
+                                                            selection = TextRange.Zero
+                                                        )
+                                                    }
                                                 }
                                                 isSearchFocused = focusState.isFocused
                                             }
@@ -991,12 +1131,21 @@ fun HomeScreenView(
                                             animationSpec = tween(durationMillis = 200),
                                             label = "ReloadStopCrossfade"
                                         ) { loading ->
-                                            Icon(
-                                                painter = painterResource(id = if (loading) R.drawable.ic_close else R.drawable.ic_reload),
-                                                contentDescription = if (loading) "Stop Loading" else "Reload",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(18.dp)
-                                            )
+                                            if (loading) {
+                                                Icon(
+                                                    imageVector = CustomIcons.Close,
+                                                    contentDescription = "Stop Loading",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = CustomIcons.Refresh,
+                                                    contentDescription = "Reload",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1006,11 +1155,11 @@ fun HomeScreenView(
                 }
             }
 
-            // 3 Circular Action Buttons Beside Search Capsule (Back, Forward, Toggle Taskbar)
+            // 2 Circular Action Buttons Beside Search Capsule (Tabs Counter & Toggle Taskbar)
             if (animatedButtonSize > 1.dp && circleButtonsAlpha > 0.001f) {
                 Spacer(modifier = Modifier.width(buttonSpacing))
 
-                // Circle 1: Back Button (⬅️)
+                // Circle 1: Tabs Button (🔲 Counter)
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     shape = CircleShape,
@@ -1019,61 +1168,58 @@ fun HomeScreenView(
                         .size(animatedButtonSize)
                         .alpha(circleButtonsAlpha)
                         .clip(CircleShape)
-                        .clickable(
+                        .combinedClickable(
                             interactionSource = remember { MutableInteractionSource() },
-                            indication = null
-                        ) {
-                            onGoBack()
-                        }
+                            indication = null,
+                            onClick = {
+                                onOpenTabs()
+                            },
+                            onLongClick = {
+                                onTabsLongClick()
+                            }
+                        )
                 ) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = ArrowBackIcon,
-                            contentDescription = "Back",
-                            tint = if (canGoBack) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
+                        // Chrome-style rounded square tab counter badge
+                        val tabText = if (tabsCount > 99) ":D" else tabsCount.toString()
+                        val tabTextSize = if (tabsCount > 99) 7.5.sp else if (tabsCount >= 10) 8.5.sp else 10.sp
 
-                Spacer(modifier = Modifier.width(buttonSpacing))
-
-                // Circle 2: Forward Button (➡️)
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = CircleShape,
-                    shadowElevation = if (isBrowsing) 8.dp else 4.dp,
-                    modifier = Modifier
-                        .size(animatedButtonSize)
-                        .alpha(circleButtonsAlpha)
-                        .clip(CircleShape)
-                        .clickable(
-                            enabled = canGoForward,
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null
+                        Box(
+                            modifier = Modifier
+                                .size(16.5.dp)
+                                .border(
+                                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.onSurface),
+                                    shape = RoundedCornerShape(3.5.dp)
+                                ),
+                            contentAlignment = Alignment.Center
                         ) {
-                            onGoForward()
+                            Text(
+                                text = tabText,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                style = TextStyle(
+                                    fontSize = tabTextSize,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = tabTextSize,
+                                    platformStyle = @Suppress("DEPRECATION") PlatformTextStyle(
+                                        includeFontPadding = false
+                                    ),
+                                    lineHeightStyle = LineHeightStyle(
+                                        alignment = LineHeightStyle.Alignment.Center,
+                                        trim = LineHeightStyle.Trim.Both
+                                    )
+                                )
+                            )
                         }
-                ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = ArrowForwardIcon,
-                            contentDescription = "Forward",
-                            tint = if (canGoForward) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                            modifier = Modifier.size(20.dp)
-                        )
                     }
                 }
 
                 Spacer(modifier = Modifier.width(buttonSpacing))
 
-                // Circle 3: Toggle Taskbar Button (⬇️ / ⬆️)
+                // Circle 2: Toggle Taskbar Button (⬇️ / ⬆️)
                 val arrowRotation by animateFloatAsState(
                     targetValue = if (isTaskbarVisible) 0f else 180f,
                     animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
@@ -1111,6 +1257,7 @@ fun HomeScreenView(
                 }
             }
         }
+    }
 
         // Search Suggestions Overlay Dropdown
         val isShowingSuggestions = isSearchFocused && searchSuggestions.isNotEmpty()

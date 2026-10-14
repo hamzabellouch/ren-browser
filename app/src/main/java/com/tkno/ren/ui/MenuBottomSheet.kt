@@ -59,10 +59,10 @@ class MenuBottomSheet(
     private val onToggleAdBlock: ((Boolean) -> Unit)? = null,
     private val onOpenTorSettings: (() -> Unit)? = null,
     private val onToggleTor: ((Boolean) -> Unit)? = null,
-    private val isTorActive: Boolean = TorManager.isTorEnabled(context),
+    private var isTorActive: Boolean = TorManager.isTorEnabled(context),
     private val onOpenWarpSettings: (() -> Unit)? = null,
     private val onToggleWarp: ((Boolean) -> Unit)? = null,
-    private val isWarpActive: Boolean = WarpManager.isWarpEnabled(context),
+    private var isWarpActive: Boolean = WarpManager.isWarpEnabled(context),
     private val onToggleIncognito: (() -> Unit)? = null,
     private val isIncognitoActive: Boolean = false,
     private val isDesktopSiteActive: Boolean = false,
@@ -94,6 +94,8 @@ class MenuBottomSheet(
     private lateinit var cardView: LinearLayout
     private var isDismissing = false
     private var selectedSwapIndex = -1
+    private var normalMenuAdapter: MenuPagerAdapter? = null
+    private var allMenuItems: MutableList<BrowserMenuItem> = mutableListOf()
 
     private val isUaActive = UserAgentManager.isUserAgentEnabled(context) && 
             !UserAgentManager.getSelectedTitle(context).equals("Default", ignoreCase = true)
@@ -156,8 +158,8 @@ class MenuBottomSheet(
             "incognito" to BrowserMenuItem("incognito", "Incognito\nmode", R.drawable.ic_incognito_glasses, isSelected = isIncognitoActive),
             "menu" to BrowserMenuItem("menu", "Menu", R.drawable.ic_menu, isTogglable = false),
             "ad_blocking" to BrowserMenuItem("ad_blocking", "Ad blocking", R.drawable.ic_ad_blocking, isSelected = isAdBlockActive),
-            "tor_network" to BrowserMenuItem("tor_network", "Tor network", R.drawable.ic_tor_network, isSelected = isTorActive),
-            "cloudflare_warp" to BrowserMenuItem("cloudflare_warp", "Cloudflare\nWARP", R.drawable.ic_cloudflare_warp, isSelected = isWarpActive),
+            "tor_network" to BrowserMenuItem("tor_network", "Tor network", R.drawable.ic_tor_network, isSelected = isTorActive, isEnabled = !isWarpActive),
+            "cloudflare_warp" to BrowserMenuItem("cloudflare_warp", "Cloudflare\nWARP", R.drawable.ic_cloudflare_warp, isSelected = isWarpActive, isEnabled = !isTorActive),
             "extensions" to BrowserMenuItem("extensions", "Extensions", R.drawable.ic_extension, isTogglable = false, isEnabled = false),
             "sandbox" to BrowserMenuItem("sandbox", "Sandbox", R.drawable.ic_sandbox, isSelected = isSandboxActive),
             "clear_data" to BrowserMenuItem("clear_data", "Clear data", R.drawable.ic_clear_data),
@@ -293,8 +295,8 @@ class MenuBottomSheet(
         cardView.removeAllViews()
         cardView.setPadding(0, dp(16), 0, dp(4))
 
-        val sortedItems = getSortedMenuItems()
-        val pagesData = sortedItems.chunked(8)
+        allMenuItems = getSortedMenuItems()
+        val pagesData = allMenuItems.chunked(8)
 
         // ViewPager for pages
         val viewPager = ViewPager2(context).apply {
@@ -302,7 +304,7 @@ class MenuBottomSheet(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 dp(190)
             )
-            adapter = MenuPagerAdapter(
+            val menuAdapter = MenuPagerAdapter(
                 pages = pagesData,
                 onItemClick = { item -> handleItemClick(item) },
                 onItemLongClick = { item ->
@@ -327,6 +329,8 @@ class MenuBottomSheet(
                     }
                 }
             )
+            normalMenuAdapter = menuAdapter
+            adapter = menuAdapter
         }
         cardView.addView(viewPager)
 
@@ -1085,15 +1089,35 @@ class MenuBottomSheet(
                 onToggleReaderMode?.invoke()
             }
             "tor_network" -> {
+                if (!item.isEnabled) return
                 val willEnable = !item.isSelected
                 item.isSelected = willEnable
+                isTorActive = willEnable
                 if (willEnable) {
+                    isWarpActive = false
+                    allMenuItems.find { it.id == "cloudflare_warp" }?.let { warpItem ->
+                        warpItem.isSelected = false
+                        warpItem.isEnabled = false
+                    }
+                    normalMenuAdapter?.notifyDataSetChanged()
                     Toast.makeText(context, context.getString(R.string.tor_connecting), Toast.LENGTH_SHORT).show()
+                } else {
+                    allMenuItems.find { it.id == "cloudflare_warp" }?.let { warpItem ->
+                        warpItem.isEnabled = true
+                    }
+                    normalMenuAdapter?.notifyDataSetChanged()
                 }
                 TorManager.toggleTor(
                     context = context,
                     onProgress = { _, _ -> },
                     onComplete = { enabled, success ->
+                        isTorActive = enabled
+                        item.isSelected = enabled
+                        allMenuItems.find { it.id == "cloudflare_warp" }?.let { warpItem ->
+                            warpItem.isEnabled = !enabled
+                            if (enabled) warpItem.isSelected = false
+                        }
+                        normalMenuAdapter?.notifyDataSetChanged()
                         val msg = if (enabled) {
                             if (success) context.getString(R.string.tor_network_enabled) else "Tor proxy locked (Routing via 127.0.0.1:9050)"
                         } else {
@@ -1105,16 +1129,35 @@ class MenuBottomSheet(
                 )
             }
             "cloudflare_warp" -> {
+                if (!item.isEnabled) return
                 val willEnable = !item.isSelected
                 item.isSelected = willEnable
+                isWarpActive = willEnable
                 if (willEnable) {
+                    isTorActive = false
+                    allMenuItems.find { it.id == "tor_network" }?.let { torItem ->
+                        torItem.isSelected = false
+                        torItem.isEnabled = false
+                    }
+                    normalMenuAdapter?.notifyDataSetChanged()
                     Toast.makeText(context, "Connecting to Cloudflare WARP...", Toast.LENGTH_SHORT).show()
+                } else {
+                    allMenuItems.find { it.id == "tor_network" }?.let { torItem ->
+                        torItem.isEnabled = true
+                    }
+                    normalMenuAdapter?.notifyDataSetChanged()
                 }
                 WarpManager.toggleWarp(
                     context = context,
                     onProgress = { _, _ -> },
                     onComplete = { enabled, success, errorMsg ->
+                        isWarpActive = enabled
                         item.isSelected = enabled
+                        allMenuItems.find { it.id == "tor_network" }?.let { torItem ->
+                            torItem.isEnabled = !enabled
+                            if (enabled) torItem.isSelected = false
+                        }
+                        normalMenuAdapter?.notifyDataSetChanged()
                         val msg = if (enabled) {
                             if (success) context.getString(R.string.cloudflare_warp_enabled) else "Cloudflare WARP proxy locked"
                         } else {
@@ -1246,7 +1289,7 @@ class MenuBottomSheet(
                 val itemView = createItemView(holder.gridLayout.context, item) {
                     if (item.isEnabled) {
                         onItemClick(item)
-                        notifyItemChanged(position)
+                        notifyDataSetChanged()
                     }
                 }
                 if (onItemLongClick != null && item.isEnabled) {
@@ -1274,17 +1317,20 @@ class MenuBottomSheet(
                 isClickable = item.isEnabled
                 isFocusable = item.isEnabled
                 if (item.isEnabled) {
+                    alpha = 1f
                     val outValue = TypedValue()
                     context.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, outValue, true)
                     setBackgroundResource(outValue.resourceId)
                     setOnClickListener { onClick() }
                 } else {
                     alpha = 0.38f
+                    background = null
+                    setOnClickListener(null)
                 }
                 setPadding(dp(2, context), dp(4, context), dp(2, context), dp(4, context))
             }
 
-            val iconColor = if (item.isSelected) {
+            val iconColor = if (item.isEnabled && item.isSelected) {
                 ContextCompat.getColor(context, R.color.accent_blue)
             } else {
                 ContextCompat.getColor(context, R.color.icon_inactive)

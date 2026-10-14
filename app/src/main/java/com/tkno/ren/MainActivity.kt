@@ -43,6 +43,7 @@ import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,7 @@ import com.tkno.ren.ui.LinkContextMenuBottomSheet
 import com.tkno.ren.ui.MaterialLoadingIndicatorOverlay
 import com.tkno.ren.ui.MenuBottomSheet
 import com.tkno.ren.ui.PagePreviewBottomSheet
+import com.tkno.ren.ui.ProfileView
 import com.tkno.ren.ui.PullRefreshLayout
 import com.tkno.ren.ui.QrCodeBottomSheet
 import com.tkno.ren.ui.TabsBottomSheet
@@ -131,7 +133,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var homeScreenContainer: ComposeView
     private lateinit var historyContainer: ComposeView
     private lateinit var tabsGridContainer: ComposeView
+    private lateinit var profileContainer: ComposeView
     private lateinit var contentOverlayContainer: FrameLayout
+    private var lastWindowInsets: WindowInsetsCompat? = null
     private lateinit var findInPageContainer: ComposeView
     private lateinit var taskBarView: View
     private val pullRefreshProgressState = mutableFloatStateOf(0f)
@@ -139,6 +143,8 @@ class MainActivity : AppCompatActivity() {
     private val isPullRefreshingState = mutableStateOf(false)
     private var isHistoryVisible = false
     private var isTabsGridVisible = false
+    private val tabsGridOpenTokenState = mutableLongStateOf(0L)
+    private var isProfileVisible = false
     private val currentBottomNavTab = mutableIntStateOf(0)
     private val isCurrentTabIncognito = mutableStateOf(false)
     private val isSandboxActiveState = mutableStateOf(false)
@@ -159,6 +165,7 @@ class MainActivity : AppCompatActivity() {
     private var bubbleRadiusPx: Float = 0f
     private var isBubbleTouchActive: Boolean = false
     private val searchBarBoundsInWindow = android.graphics.RectF()
+    private val topNavButtonsBoundsInWindow = android.graphics.RectF()
     private var isSearchBarTouchActive: Boolean = false
     private var statusBarHeightPx: Int = 0
     private var lastHomePressTime: Long = 0L
@@ -397,6 +404,11 @@ class MainActivity : AppCompatActivity() {
         tabsGridContainer.visibility = View.GONE
         browserLayout.addView(tabsGridContainer)
 
+        // Profile Container (hidden by default)
+        profileContainer = createProfileComposeView()
+        profileContainer.visibility = View.GONE
+        browserLayout.addView(profileContainer)
+
         // Content Overlay Container for Menu, Settings, Downloads (hidden by default)
         contentOverlayContainer = FrameLayout(this).apply {
             visibility = View.GONE
@@ -418,6 +430,7 @@ class MainActivity : AppCompatActivity() {
 
         // Window insets listener to handle status bar and bottom navigation insets cleanly
         ViewCompat.setOnApplyWindowInsetsListener(browserLayout) { _, insets ->
+            lastWindowInsets = insets
             val statusInsets = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars() or WindowInsetsCompat.Type.ime())
             statusBarHeightPx = statusInsets.top
@@ -454,12 +467,24 @@ class MainActivity : AppCompatActivity() {
                 tabsGridContainer.layoutParams = it
             }
 
+            // Profile container extends to bottom under floating taskbar
+            val profileParams = profileContainer.layoutParams as? FrameLayout.LayoutParams
+            profileParams?.let {
+                it.topMargin = 0
+                it.bottomMargin = 0
+                profileContainer.layoutParams = it
+            }
+
             // Find in page container extends from top
             val findParams = findInPageContainer.layoutParams as? FrameLayout.LayoutParams
             findParams?.let {
                 it.topMargin = 0
                 it.bottomMargin = 0
                 findInPageContainer.layoutParams = it
+            }
+
+            if (contentOverlayContainer.visibility == View.VISIBLE) {
+                ViewCompat.dispatchApplyWindowInsets(contentOverlayContainer, insets)
             }
 
             insets
@@ -542,7 +567,7 @@ class MainActivity : AppCompatActivity() {
     private fun createHomeScreenOverlay(): FrameLayout {
         val overlay = object : FrameLayout(this) {
             override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-                if (isBrowsingState.value && !isHistoryVisible && !isTabsGridVisible) {
+                if (isBrowsingState.value && !isHistoryVisible && !isTabsGridVisible && !isProfileVisible) {
                     if (isFloatingBubbleState.value) {
                         val touchPadding = dp(20).toFloat()
                         val baseRadius = if (bubbleRadiusPx > 0f) bubbleRadiusPx else dp(26).toFloat()
@@ -573,6 +598,12 @@ class MainActivity : AppCompatActivity() {
                             ev.x <= searchBarBoundsInWindow.right + touchPadding &&
                             ev.y >= searchBarBoundsInWindow.top - touchPadding &&
                             ev.y <= searchBarBoundsInWindow.bottom + touchPadding
+                        ) || (
+                            !topNavButtonsBoundsInWindow.isEmpty &&
+                            ev.x >= topNavButtonsBoundsInWindow.left - touchPadding &&
+                            ev.x <= topNavButtonsBoundsInWindow.right + touchPadding &&
+                            ev.y >= topNavButtonsBoundsInWindow.top - touchPadding &&
+                            ev.y <= topNavButtonsBoundsInWindow.bottom + touchPadding
                         )
 
                         if (ev.action == MotionEvent.ACTION_DOWN) {
@@ -616,6 +647,11 @@ class MainActivity : AppCompatActivity() {
                     val canGoBack by canGoBackState
                     val canGoForward by canGoForwardState
                     val isTaskbarVisible by isTaskbarVisibleState
+                    val tabCount = if (incognito) {
+                        tabsListState.count { it.isIncognito }
+                    } else {
+                        tabsListState.count { !it.isIncognito }
+                    }.coerceAtLeast(1)
                     HomeScreenView(
                         isBrowsing = isBrowsing,
                         currentUrl = currentUrl,
@@ -638,6 +674,13 @@ class MainActivity : AppCompatActivity() {
                                 activeTab.webView.goForward()
                             }
                             updateNavigationHistoryState()
+                        },
+                        tabsCount = tabCount,
+                        onOpenTabs = {
+                            showTabsGridScreen()
+                        },
+                        onTabsLongClick = {
+                            showTabsSheet()
                         },
                         isTaskbarVisible = isTaskbarVisible,
                         onToggleTaskbar = {
@@ -678,6 +721,13 @@ class MainActivity : AppCompatActivity() {
                         },
                         onSearchBarBoundsChanged = { left, top, right, bottom ->
                             searchBarBoundsInWindow.set(left, top, right, bottom)
+                        },
+                        onTopNavButtonsBoundsChanged = { left, top, right, bottom ->
+                            if (isBrowsingState.value && !isFloatingBubbleState.value) {
+                                topNavButtonsBoundsInWindow.set(left, top, right, bottom)
+                            } else {
+                                topNavButtonsBoundsInWindow.setEmpty()
+                            }
                         }
                     )
                 }
@@ -695,9 +745,11 @@ class MainActivity : AppCompatActivity() {
             )
             setContent {
                 val activeId by activeTabIdState
+                val openToken by tabsGridOpenTokenState
                 TabsGridView(
                     tabs = tabsListState,
                     activeTabId = activeId,
+                    openToken = openToken,
                     onSelectTab = { selectedTab ->
                         switchTab(selectedTab)
                         if (selectedTab.url == "about:blank" || selectedTab.url.isEmpty()) {
@@ -746,6 +798,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun createProfileComposeView(): ComposeView {
+        return ComposeView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            setContent {
+                val incognito by isCurrentTabIncognito
+                RenTheme(isIncognito = incognito) {
+                    ProfileView(
+                        onBack = {
+                            val activeTab = getActiveTab()
+                            if (activeTab?.url == "about:blank" || activeTab?.url.isNullOrEmpty()) {
+                                showHomeScreen()
+                            } else {
+                                showBrowsingScreen()
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
     private fun createComposeTaskBar(): View {
         return ComposeView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -767,7 +843,7 @@ class MainActivity : AppCompatActivity() {
                         onTabSelect = { index ->
                             when (index) {
                                 0 -> {
-                                    val isAnyOverlayOpen = isHistoryVisible || isTabsGridVisible || isSettingsOpen || isMenuOpen || isDownloadsOpen || isBookmarksOpen || currentMenuSheet?.isShowing == true || currentQrCodeSheet?.isShowing == true
+                                    val isAnyOverlayOpen = isHistoryVisible || isTabsGridVisible || isProfileVisible || isSettingsOpen || isMenuOpen || isDownloadsOpen || isBookmarksOpen || currentMenuSheet?.isShowing == true || currentQrCodeSheet?.isShowing == true
                                     if (isAnyOverlayOpen) {
                                         closeAllOverlays()
                                         val activeTab = getActiveTab()
@@ -798,23 +874,19 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 1 -> {
                                     closeAllOverlays()
-                                    showTabsGridScreen()
+                                    showHistoryScreen()
                                 }
                                 2 -> {
                                     closeAllOverlays()
-                                    showHistoryScreen()
+                                    showProfileScreen()
                                 }
                                 3 -> {
                                     showMenuSheet()
                                 }
                             }
                         },
-                    onTabLongClick = { index ->
-                        if (index == 1) {
-                            showTabsSheet()
-                        }
-                    }
-                )
+                        onTabLongClick = null
+                    )
             }
         }
     }
@@ -2110,6 +2182,7 @@ class MainActivity : AppCompatActivity() {
         isFloatingBubbleState.value = false
         isHistoryVisible = false
         isTabsGridVisible = false
+        isProfileVisible = false
         isPullRefreshingState.value = false
         webContainer.setRefreshing(false)
         webContainer.isPullToRefreshEnabled = false
@@ -2131,12 +2204,14 @@ class MainActivity : AppCompatActivity() {
         webContainer.visibility = View.GONE
         historyContainer.visibility = View.GONE
         tabsGridContainer.visibility = View.GONE
+        profileContainer.visibility = View.GONE
     }
 
     private fun showBrowsingScreen(resetTaskbar: Boolean = false) {
         closeAllOverlays()
         isHistoryVisible = false
         isTabsGridVisible = false
+        isProfileVisible = false
         webContainer.isPullToRefreshEnabled = true
         currentBottomNavTab.intValue = 0
         val activeTab = getActiveTab()
@@ -2154,6 +2229,7 @@ class MainActivity : AppCompatActivity() {
         webContainer.visibility = View.VISIBLE
         historyContainer.visibility = View.GONE
         tabsGridContainer.visibility = View.GONE
+        profileContainer.visibility = View.GONE
     }
 
     private fun showHistoryScreen() {
@@ -2165,11 +2241,13 @@ class MainActivity : AppCompatActivity() {
         captureActiveTabSnapshot()
         isHistoryVisible = true
         isTabsGridVisible = false
-        currentBottomNavTab.intValue = 2
+        isProfileVisible = false
+        currentBottomNavTab.intValue = 1
         homeScreenOverlay.visibility = View.GONE
         webContainer.visibility = View.GONE
         historyContainer.visibility = View.VISIBLE
         tabsGridContainer.visibility = View.GONE
+        profileContainer.visibility = View.GONE
         hideKeyboard()
     }
 
@@ -2182,11 +2260,32 @@ class MainActivity : AppCompatActivity() {
         captureActiveTabSnapshot()
         isTabsGridVisible = true
         isHistoryVisible = false
-        currentBottomNavTab.intValue = 1
+        isProfileVisible = false
+        tabsGridOpenTokenState.longValue = System.currentTimeMillis()
         homeScreenOverlay.visibility = View.GONE
         webContainer.visibility = View.GONE
         historyContainer.visibility = View.GONE
         tabsGridContainer.visibility = View.VISIBLE
+        profileContainer.visibility = View.GONE
+        hideKeyboard()
+    }
+
+    private fun showProfileScreen() {
+        closeAllOverlays()
+        isFloatingBubbleState.value = false
+        isPullRefreshingState.value = false
+        webContainer.setRefreshing(false)
+        webContainer.isPullToRefreshEnabled = false
+        captureActiveTabSnapshot()
+        isProfileVisible = true
+        isHistoryVisible = false
+        isTabsGridVisible = false
+        currentBottomNavTab.intValue = 2
+        homeScreenOverlay.visibility = View.GONE
+        webContainer.visibility = View.GONE
+        historyContainer.visibility = View.GONE
+        tabsGridContainer.visibility = View.GONE
+        profileContainer.visibility = View.VISIBLE
         hideKeyboard()
     }
 
@@ -2899,16 +2998,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showOverlayView(view: View) {
+        contentOverlayContainer.removeAllViews()
+        contentOverlayContainer.addView(view)
+        contentOverlayContainer.visibility = View.VISIBLE
+        lastWindowInsets?.let { insets ->
+            ViewCompat.dispatchApplyWindowInsets(contentOverlayContainer, insets)
+            ViewCompat.dispatchApplyWindowInsets(view, insets)
+        }
+        ViewCompat.requestApplyInsets(contentOverlayContainer)
+        ViewCompat.requestApplyInsets(view)
+        taskBarView.bringToFront()
+    }
+
     private fun openSettings(initialScreen: String = "main") {
         closeAllOverlays()
         webContainer.isPullToRefreshEnabled = false
         isSettingsOpen = true
         currentBottomNavTab.intValue = 3
         val settingsView = createSettingsComposeView(initialScreen)
-        contentOverlayContainer.removeAllViews()
-        contentOverlayContainer.addView(settingsView)
-        contentOverlayContainer.visibility = View.VISIBLE
-        taskBarView.bringToFront()
+        showOverlayView(settingsView)
     }
 
     private fun openUserAgentSettings() {
@@ -2951,10 +3060,7 @@ class MainActivity : AppCompatActivity() {
         isMenuOpen = true
         currentBottomNavTab.intValue = 3
         val menuView = createMenuComposeView()
-        contentOverlayContainer.removeAllViews()
-        contentOverlayContainer.addView(menuView)
-        contentOverlayContainer.visibility = View.VISIBLE
-        taskBarView.bringToFront()
+        showOverlayView(menuView)
     }
 
     private fun closeMenu() {
@@ -2994,10 +3100,7 @@ class MainActivity : AppCompatActivity() {
         isDownloadsOpen = true
         currentBottomNavTab.intValue = 3
         val downloadsView = createDownloadsComposeView()
-        contentOverlayContainer.removeAllViews()
-        contentOverlayContainer.addView(downloadsView)
-        contentOverlayContainer.visibility = View.VISIBLE
-        taskBarView.bringToFront()
+        showOverlayView(downloadsView)
     }
 
     private fun closeDownloads() {
@@ -3038,10 +3141,7 @@ class MainActivity : AppCompatActivity() {
         isBookmarksOpen = true
         currentBottomNavTab.intValue = 3
         val bookmarksView = createBookmarksComposeView()
-        contentOverlayContainer.removeAllViews()
-        contentOverlayContainer.addView(bookmarksView)
-        contentOverlayContainer.visibility = View.VISIBLE
-        taskBarView.bringToFront()
+        showOverlayView(bookmarksView)
     }
 
     private fun closeBookmarks() {
@@ -3072,12 +3172,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restoreNavTabAfterOverlay() {
-        webContainer.isPullToRefreshEnabled = isBrowsingState.value && !isHistoryVisible && !isTabsGridVisible
+        webContainer.isPullToRefreshEnabled = isBrowsingState.value && !isHistoryVisible && !isTabsGridVisible && !isProfileVisible
         if (isSettingsOpen || isMenuOpen || isDownloadsOpen || isBookmarksOpen || currentMenuSheet?.isShowing == true || currentQrCodeSheet?.isShowing == true) {
             currentBottomNavTab.intValue = 3
-        } else if (isTabsGridVisible) {
-            currentBottomNavTab.intValue = 1
         } else if (isHistoryVisible) {
+            currentBottomNavTab.intValue = 1
+        } else if (isProfileVisible) {
             currentBottomNavTab.intValue = 2
         } else {
             currentBottomNavTab.intValue = 0
@@ -3119,6 +3219,16 @@ class MainActivity : AppCompatActivity() {
 
         if (isFloatingBubbleState.value) {
             isFloatingBubbleState.value = false
+            return
+        }
+
+        if (isProfileVisible) {
+            val activeTab = getActiveTab()
+            if (activeTab?.url == "about:blank" || activeTab?.url.isNullOrEmpty()) {
+                showHomeScreen()
+            } else {
+                showBrowsingScreen()
+            }
             return
         }
 

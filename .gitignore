@@ -13,5 +13,6 @@
 .cxx
 *.apk
 *.aab
+release/
 app/release/
 *.log

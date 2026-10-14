@@ -1,11 +1,7 @@
 package com.tkno.ren.rentor
 
-import android.app.Application
 import android.content.Context
 import android.util.Log
-import io.matthewnelson.kmp.tor.KmpTorLoaderAndroid
-import io.matthewnelson.kmp.tor.manager.TorManager as KmpTorManager
-import io.matthewnelson.kmp.tor.manager.common.event.TorManagerEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,6 +18,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -31,6 +28,7 @@ import java.net.URL
 /**
  * Ren-Tor Engine: A high-performance, customized Tor daemon controller & privacy engine
  * tailored specifically for Ren Browser.
+ * Fully independent implementation with native Tor binary support and zero external kmp-tor dependency.
  */
 object RenTorEngine {
     private const val TAG = "RenTorEngine"
@@ -43,10 +41,11 @@ object RenTorEngine {
     private val _logs = MutableSharedFlow<RenTorLogEntry>(replay = 50)
     val logs: SharedFlow<RenTorLogEntry> = _logs.asSharedFlow()
 
-    private var kmpTorManager: KmpTorManager? = null
     private var controller: RenTorController? = null
     private var monitorJob: Job? = null
+    private var streamJob: Job? = null
     private var statsJob: Job? = null
+    private var torProcess: Process? = null
     private var isStarting = false
 
     val bootstrapProgress: Int
@@ -81,15 +80,27 @@ object RenTorEngine {
         }
     }
 
-    @Synchronized
-    private fun getOrCreateTorManager(context: Context, settings: RenTorSettings): KmpTorManager {
-        kmpTorManager?.let { return it }
-        val app = context.applicationContext as Application
-        val provider = RenTorConfigProvider(app, settings)
-        val loader = KmpTorLoaderAndroid(provider)
-        val manager = KmpTorManager.newInstance(app, loader)
-        kmpTorManager = manager
-        return manager
+    /**
+     * Finds the native Tor executable in the application's native library path.
+     */
+    private fun findTorExecutable(context: Context, torDir: File): File? {
+        val nativeDir = File(context.applicationInfo.nativeLibraryDir)
+        val files = nativeDir.listFiles()
+        if (files != null) {
+            for (file in files) {
+                if (file.name == "libtor.so" || file.name == "libKmpTor.so") {
+                    return file
+                }
+            }
+        }
+
+        // Fallback: check working directory if extracted manually
+        val local = File(torDir, "libtor.so")
+        if (local.exists()) {
+            return local
+        }
+
+        return null
     }
 
     /**
@@ -114,6 +125,7 @@ object RenTorEngine {
             )
         }
 
+        // Fast-path: SOCKS proxy is already active
         if (isSocksPortOpen(host, port)) {
             appendLog(RenTorLogEntry.LogLevel.INFO, "Ren-Tor daemon is already running and accessible on port $port.")
             _state.update {
@@ -146,67 +158,98 @@ object RenTorEngine {
         appendLog(RenTorLogEntry.LogLevel.INFO, "Initializing Ren-Tor daemon on SOCKS:$port CTRL:$ctrlPort")
         onProgress(10, "Starting Ren-Tor privacy engine...")
 
-        val manager = getOrCreateTorManager(context, settings)
+        // Generate torrc configuration and extract GeoIP assets
+        val config = RenTorConfig(context, settings)
+        val torrcFile = try {
+            config.generateTorrc()
+        } catch (e: Exception) {
+            appendLog(RenTorLogEntry.LogLevel.ERROR, "Failed to generate torrc: ${e.message}")
+            null
+        }
 
-        manager.addListener(object : TorManagerEvent.Listener() {
-            override fun managerEventState(state: TorManagerEvent.State) {
-                appendLog(RenTorLogEntry.LogLevel.DEBUG, "Ren-Tor State: $state")
+        val executable = findTorExecutable(context, config.torDir)
+        if (executable == null) {
+            appendLog(RenTorLogEntry.LogLevel.ERROR, "Native Tor binary not found in ${context.applicationInfo.nativeLibraryDir}")
+            _state.update {
+                it.copy(
+                    status = RenTorStatus.ERROR,
+                    lastError = "Native Tor binary (libtor.so) not found on device."
+                )
             }
+            onProgress(0, "Error: Tor binary missing")
+            onComplete(false, "Native Tor binary (libtor.so) not found on device.")
+            isStarting = false
+            return
+        }
 
-            override fun managerEventLifecycle(lifecycle: TorManagerEvent.Lifecycle<*>) {
-                appendLog(RenTorLogEntry.LogLevel.DEBUG, "Ren-Tor Lifecycle: $lifecycle")
-            }
+        // Launch native Tor process
+        try {
+            val cmd = listOf(executable.absolutePath, "-f", torrcFile!!.absolutePath)
+            val pb = ProcessBuilder(cmd)
+            val env = pb.environment()
+            env["HOME"] = config.torDir.absolutePath
+            pb.directory(config.torDir)
+            pb.redirectErrorStream(true)
+            val process = pb.start()
+            torProcess = process
+            appendLog(RenTorLogEntry.LogLevel.INFO, "Started Tor daemon process from ${executable.absolutePath}")
 
-            override fun managerEventInfo(message: String) {
-                appendLog(RenTorLogEntry.LogLevel.INFO, message)
-                if (message.contains("Bootstrapped")) {
-                    val match = Regex("Bootstrapped (\\d+)%").find(message)
-                    match?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { percent ->
-                        _state.update {
-                            it.copy(
-                                status = if (percent >= 100) RenTorStatus.CONNECTED else RenTorStatus.BOOTSTRAPPING,
-                                bootstrapProgress = percent,
-                                bootstrapMessage = message
-                            )
-                        }
-                        engineScope.launch {
-                            onProgress(percent, message)
+            // Continuously consume output to prevent pipe buffer stalls, and parse real bootstrap progress!
+            streamJob?.cancel()
+            streamJob = engineScope.launch(Dispatchers.IO) {
+                try {
+                    val reader = process.inputStream.bufferedReader()
+                    while (isActive) {
+                        val line = reader.readLine() ?: break
+                        appendLog(RenTorLogEntry.LogLevel.DEBUG, "[Tor] $line")
+
+                        if (line.contains("Bootstrapped ")) {
+                            val match = Regex("""Bootstrapped\s+(\d+)%""").find(line)
+                            match?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { percent ->
+                                val cleanMsg = line.substringAfter("] ").ifEmpty { line }
+                                _state.update {
+                                    it.copy(
+                                        status = if (percent >= 100) RenTorStatus.CONNECTED else RenTorStatus.BOOTSTRAPPING,
+                                        bootstrapProgress = percent,
+                                        bootstrapMessage = cleanMsg
+                                    )
+                                }
+                                withContext(Dispatchers.Main) {
+                                    onProgress(percent, cleanMsg)
+                                }
+                            }
                         }
                     }
+                } catch (e: Exception) {
+                    appendLog(RenTorLogEntry.LogLevel.DEBUG, "Tor output stream ended: ${e.message}")
                 }
             }
-
-            override fun managerEventWarn(message: String) {
-                appendLog(RenTorLogEntry.LogLevel.WARN, "Ren-Tor Warning: $message")
-            }
-
-            override fun managerEventError(t: Throwable) {
-                appendLog(RenTorLogEntry.LogLevel.ERROR, "Ren-Tor Error: ${t.message}")
-                _state.update {
-                    it.copy(lastError = t.message)
-                }
-            }
-        })
-
-        // Start Tor Daemon
-        try {
-            manager.startQuietly()
         } catch (e: Exception) {
-            appendLog(RenTorLogEntry.LogLevel.ERROR, "Failed to start Tor manager: ${e.message}")
+            appendLog(RenTorLogEntry.LogLevel.ERROR, "Failed to start Tor process: ${e.message}")
+            _state.update {
+                it.copy(
+                    status = RenTorStatus.ERROR,
+                    lastError = "Failed to launch Tor process: ${e.localizedMessage}"
+                )
+            }
+            onProgress(0, "Error starting Tor process")
+            onComplete(false, "Failed to launch Tor process: ${e.localizedMessage}")
+            isStarting = false
+            return
         }
 
         // Monitor readiness of SOCKS port
         monitorJob?.cancel()
         monitorJob = engineScope.launch(Dispatchers.IO) {
             var attempts = 0
-            val maxAttempts = 60 // 60 * 500ms = 30 seconds
+            val maxAttempts = 120 // 60 seconds (120 * 500ms)
             var connected = false
 
             while (isActive && attempts < maxAttempts) {
                 delay(500)
                 attempts++
-                val open = isSocksPortOpen(host, port)
-                if (open) {
+
+                if (isSocksPortOpen(host, port)) {
                     connected = true
                     _state.update {
                         it.copy(
@@ -217,35 +260,40 @@ object RenTorEngine {
                     }
                     break
                 }
-                val progress = (10 + (attempts * 2)).coerceAtMost(95)
-                _state.update {
-                    it.copy(
-                        status = RenTorStatus.BOOTSTRAPPING,
-                        bootstrapProgress = progress,
-                        bootstrapMessage = "Building Ren-Tor circuits... ($progress%)"
-                    )
-                }
-                withContext(Dispatchers.Main) {
-                    onProgress(progress, "Building Ren-Tor circuits... ($progress%)")
+
+                // Break early if process terminated unexpectedly
+                val proc = torProcess
+                if (proc != null && !proc.isAlive) {
+                    val exitCode = try { proc.exitValue() } catch (_: Exception) { -1 }
+                    appendLog(RenTorLogEntry.LogLevel.ERROR, "Tor process exited unexpectedly with code $exitCode")
+                    _state.update {
+                        it.copy(
+                            status = RenTorStatus.ERROR,
+                            lastError = "Tor daemon process exited unexpectedly (code: $exitCode)"
+                        )
+                    }
+                    break
                 }
             }
 
             isStarting = false
             withContext(Dispatchers.Main) {
                 if (connected) {
-                    appendLog(RenTorLogEntry.LogLevel.INFO, "Ren-Tor connection established successfully!")
+                    appendLog(RenTorLogEntry.LogLevel.INFO, "Ren-Tor connected successfully!")
                     startStatsPolling(ctrlPort)
                     onProgress(100, "Ren-Tor connected successfully!")
                     onComplete(true, "Ren-Tor connected successfully")
                 } else {
+                    val errMsg = _state.value.lastError
+                        ?: "Could not establish Ren-Tor circuit. Please check internet access or bridge settings."
                     _state.update {
                         it.copy(
                             status = RenTorStatus.ERROR,
-                            lastError = "Could not establish Ren-Tor circuit. Please check internet access or bridge settings."
+                            lastError = errMsg
                         )
                     }
-                    appendLog(RenTorLogEntry.LogLevel.ERROR, "Ren-Tor bootstrap timeout reached.")
-                    onComplete(false, "Could not establish Ren-Tor circuit. Please check internet access or bridge settings.")
+                    appendLog(RenTorLogEntry.LogLevel.ERROR, "Ren-Tor bootstrap failed: $errMsg")
+                    onComplete(false, errMsg)
                 }
             }
         }
@@ -328,10 +376,22 @@ object RenTorEngine {
      */
     fun stop(context: Context) {
         monitorJob?.cancel()
+        streamJob?.cancel()
         statsJob?.cancel()
-        controller?.close()
-        controller = null
         isStarting = false
+
+        engineScope.launch(Dispatchers.IO) {
+            try {
+                controller?.signalShutdown()
+            } catch (_: Exception) {}
+            controller?.close()
+            controller = null
+
+            try {
+                torProcess?.destroy()
+                torProcess = null
+            } catch (_: Exception) {}
+        }
 
         _state.update {
             it.copy(
@@ -343,13 +403,7 @@ object RenTorEngine {
                 circuits = emptyList()
             )
         }
-
-        try {
-            kmpTorManager?.stopQuietly()
-            appendLog(RenTorLogEntry.LogLevel.INFO, "Ren-Tor daemon stopped.")
-        } catch (e: Exception) {
-            appendLog(RenTorLogEntry.LogLevel.ERROR, "Error stopping Ren-Tor daemon: ${e.message}")
-        }
+        appendLog(RenTorLogEntry.LogLevel.INFO, "Ren-Tor daemon stopped.")
     }
 
     /**

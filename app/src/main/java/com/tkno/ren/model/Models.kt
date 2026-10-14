@@ -23,7 +23,7 @@ data class BrowserMenuItem(
     val iconRes: Int,
     var isSelected: Boolean = false,
     val isTogglable: Boolean = true,
-    val isEnabled: Boolean = true
+    var isEnabled: Boolean = true
 )
 
 enum class SettingType {

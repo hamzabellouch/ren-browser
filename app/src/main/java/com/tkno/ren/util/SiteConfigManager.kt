@@ -58,6 +58,7 @@ object SiteConfigManager {
     private const val KEY_AUTOMATIC_DOWNLOADS = "automatic_downloads_permission" // "ask", "allow", "block"
     private const val KEY_INSECURE_CONTENT_BLOCKED = "insecure_content_blocked"
     private const val KEY_HTTPS_ONLY_MODE = "https_only_mode"
+    const val KEY_SHOW_FULL_URL = "show_full_url"
 
     // DNS Providers
     data class DnsProvider(
@@ -100,8 +101,39 @@ object SiteConfigManager {
         )
     )
 
-    private fun getPrefs(context: Context): SharedPreferences {
+    fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    // --- Address Bar & URL Display ---
+
+    fun isShowFullUrlEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_SHOW_FULL_URL, false)
+    }
+
+    fun setShowFullUrlEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_SHOW_FULL_URL, enabled).apply()
+    }
+
+    fun formatUrlForDisplay(url: String, context: Context): String {
+        return formatUrlForDisplay(url, isShowFullUrlEnabled(context))
+    }
+
+    fun formatUrlForDisplay(url: String, showFullUrl: Boolean): String {
+        if (showFullUrl || url.isBlank() || url == "about:blank") return url
+        var display = url.trim()
+        if (display.startsWith("https://", ignoreCase = true)) {
+            display = display.substring(8)
+        } else if (display.startsWith("http://", ignoreCase = true)) {
+            display = display.substring(7)
+        }
+        if (display.startsWith("www.", ignoreCase = true)) {
+            display = display.substring(4)
+        }
+        if (display.endsWith("/") && !display.dropLast(1).contains("/")) {
+            display = display.removeSuffix("/")
+        }
+        return display
     }
 
     // --- Secure DNS Getters & Setters ---

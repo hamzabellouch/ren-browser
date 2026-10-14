@@ -30,7 +30,7 @@
     <string name="scripts_addons">البرمجيات النصية</string>
     <string name="scripts_addons_desc">نصوص المستخدم المخصصة (.user.js)</string>
     <string name="about">حول</string>
-    <string name="about_desc">متصفح Ren الإصدار 0.0.2-beta</string>
+    <string name="about_desc">متصفح Ren الإصدار 0.0.3-beta</string>
     <string name="whats_new">ما الجديد</string>
     <string name="close">إغلاق</string>
     <string name="back">رجوع</string>
@@ -47,6 +47,26 @@
     <string name="credits_desc">الشكر والتقدير والبرمجيات الحرة</string>
     <string name="auto_update">التحديث التلقائي</string>
     <string name="check_for_updates_desc">التحقق تلقائياً من وجود إصدارات أحدث على GitHub</string>
+    <string name="enable_auto_update">تفعيل التحديث التلقائي</string>
+    <string name="update_channel">قناة التحديث</string>
+    <string name="stable">مستقر</string>
+    <string name="official_release">إصدار رسمي</string>
+    <string name="beta">تجريبي</string>
+    <string name="early_access">وصول مبكر</string>
+    <string name="check_for_updates">التحقق من التحديثات</string>
+    <string name="pre_release_desc">قم بتثبيت الإصدارات التجريبية لمعاينة الميزات والتغييرات الجديدة.\n\nقد يكون هناك بعض عدم الاستقرار في هذه الإصدارات، لذا لا تتردد في تقديم ملاحظاتك إذا واجهت أي مشاكل لمساعدتنا في تحسين التطبيق للمستقبل.</string>
+    <string name="update_directory">مجلد التحديث</string>
+    <string name="auto_install_update">تثبيت التحديث تلقائياً</string>
+    <string name="install_permission_granted">تم منح إذن التثبيت</string>
+    <string name="app_up_to_date">متصفح Ren محدث إلى آخر إصدار</string>
+    <string name="app_update_failed">فشل التحقق من وجود تحديثات</string>
+    <string name="update">تحديث</string>
+    <string name="done">تم</string>
+    <string name="downloading">جارٍ التنزيل</string>
+    <string name="downloaded_successfully">تم التنزيل بنجاح</string>
+    <string name="installer_auto_open">سيتم فتح أداة التثبيت تلقائياً.</string>
+    <string name="apk_saved_to_files">تم تنزيل التحديث. افتح في مدير الملفات للتثبيت.</string>
+    <string name="open_in_files">فتح في الملفات</string>
     <string name="privacy_policy">سياسة الخصوصية</string>
     <string name="privacy_policy_desc">الاطلاع على سياسة الخصوصية</string>
     <string name="version">الإصدار</string>
@@ -75,7 +95,7 @@
     <string name="telegram_channel">تيليجرام (Telegram)</string>
     <string name="telegram_channel_desc">متابعة المطور على تيليجرام لآخر المستجدات</string>
     <string name="issue_tracker_hint">هل واجهت خطأ ما؟ قبل الإبلاغ عن مشكلة جديدة، يرجى البحث في متتبع المشاكل لدينا. العديد من المشاكل الشائعة تمت معالجتها وتوثيقها هناك بالفعل.</string>
-    <string name="links_issue_tracker">متتبع مشاكل Links</string>
+    <string name="links_issue_tracker">رين براوزر Issues Tracker</string>
     <string name="proceed">متابعة</string>
     <string name="cancel">إلغاء</string>
     <string name="contact_developer">التواصل مع المطور</string>
@@ -222,4 +242,12 @@
     <string name="warp_license_key_desc">أدخل مفتاح WARP+ الخاص بك للحصول على سرعة فائقة</string>
     <string name="warp_diagnostics">اختبار اتصال WARP</string>
     <string name="warp_diagnostics_desc">التحقق من توجيه Cloudflare ومعرفة عنوان IP وبيانات الخادم</string>
+    <string name="tor_unavailable_warp_active">غير متاح أثناء تفعيل Cloudflare WARP</string>
+    <string name="warp_unavailable_tor_active">غير متاح أثناء تفعيل شبكة Tor</string>
+    <string name="problem_report">إبلاغ عن مشكلة</string>
+    <string name="problem_report_dialog_desc">إذا واجهتكم مشكلة، المرجو ملء هذه الاستمارة، لن تتجاوز المدة تقريباً 20 ثانية.</string>
+    <string name="open_report_form">إبلاغ</string>
+    <string name="show_full_urls">إظهار عناوين URL كاملة دائماً</string>
+    <string name="show_full_urls_desc">إظهار http:// و https:// و www في شريط العناوين</string>
+    <string name="address_bar_and_navigation">شريط العناوين والتنقل</string>
 </resources>

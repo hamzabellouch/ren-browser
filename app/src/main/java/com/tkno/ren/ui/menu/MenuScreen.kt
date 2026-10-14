@@ -116,10 +116,13 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tkno.ren.R
+import com.tkno.ren.ui.components.CustomIcons
+import com.tkno.ren.ui.components.Report
 import com.tkno.ren.ui.settings.AdBlockingSettingsPage
 import com.tkno.ren.ui.settings.AdvancedSettingsPage
 import com.tkno.ren.ui.settings.AppearancePreferences
@@ -150,19 +153,16 @@ import com.tkno.ren.ui.theme.RenTheme
 import com.tkno.ren.ui.theme.ThemeManager
 
 /* ---------------- روابط وروابط خارجية ---------------- */
-private const val releaseURL = "https://github.com/hamzabellouch/links/releases"
-private const val repoUrl = "https://github.com/hamzabellouch/links/blob/main/README.md"
-private const val githubIssueUrl = "https://github.com/hamzabellouch/links/issues"
+private const val releaseURL = "https://github.com/hamzabellouch/ren-browser/releases"
+private const val repoUrl = "https://github.com/hamzabellouch/ren-browser/blob/main/README.md"
+private const val githubIssueUrl = "https://github.com/hamzabellouch/ren-browser/issues"
 private const val matrixSpaceUrl = "https://sites.google.com/view/hamzabellouch"
 private const val githubSponsor = "https://github.com/sponsors/hamzabellouch"
-private const val privacyPolicyUrl = "https://github.com/hamzabellouch/links/blob/main/PRIVACY_POLICY.md"
+private const val privacyPolicyUrl = "https://github.com/hamzabellouch/ren-browser/blob/main/PRIVACY_POLICY.md"
+private const val reportProblemFormUrl = "https://docs.google.com/forms/d/e/1FAIpQLScLCRgTEY0IqBHoJdyzaCDa92a6tOyeOSz1TScqj0e8iQ89MQ/viewform?usp=header"
 
 val LocalFireDepartment: ImageVector = Icons.Outlined.LocalFireDepartment
 val Policy: ImageVector = Icons.Outlined.Policy
-
-object DynamicColorImageVectors {
-    fun coder(): ImageVector = Icons.Outlined.DeveloperMode
-}
 
 public val Dashboard2: ImageVector
     get() {
@@ -292,40 +292,43 @@ enum class MenuSubScreen {
     Sponsor, 
     Troubleshooting, 
     About,
-    Credits
+    Credits,
+    Update
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainMenuList(
     onNavigateTo: (MenuSubScreen) -> Unit
 ) {
-    Box(
-        modifier = Modifier.fillMaxSize()
-    ) {
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = stringResource(id = R.string.menu),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    scrolledContainerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                )
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .padding(top = innerPadding.calculateTopPadding())
                 .verticalScroll(rememberScrollState())
-                .statusBarsPadding()
                 .navigationBarsPadding()
         ) {
-            // شريط العنوان العلوي (Header)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 20.dp, top = 2.dp, bottom = 12.dp)
-                    .height(48.dp),
-                horizontalArrangement = Arrangement.Start,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(id = R.string.menu), // "Menu"
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
             Spacer(Modifier.height(8.dp))
 
             // عناصر وخيارات القائمة
@@ -563,7 +566,6 @@ fun SponsorsPage(onNavigateBack: () -> Unit) {
                     },
                     navigationIcon = { BackButton { onNavigateBack() } },
                     scrollBehavior = scrollBehavior,
-                    windowInsets = WindowInsets(0.dp),
                 )
             }
         },
@@ -651,7 +653,7 @@ fun SponsorsPage(onNavigateBack: () -> Unit) {
                             // زر تقييم بنجمة على GitHub (Star Button)
                             Button(
                                 onClick = {
-                                    uriHandler.openUri("https://github.com/hamzabellouch/links")
+                                    uriHandler.openUri("https://github.com/hamzabellouch/ren-browser")
                                 },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFFFFC107),
@@ -685,6 +687,7 @@ fun TroubleShootingPage(onNavigateBack: () -> Unit) {
     val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
     var showContactDialog by remember { mutableStateOf(false) }
+    var showReportDialog by remember { mutableStateOf(false) }
 
     val isDark = ThemeManager.isDark(isSystemInDarkTheme())
 
@@ -872,9 +875,47 @@ fun TroubleShootingPage(onNavigateBack: () -> Unit) {
                         title = stringResource(R.string.links_issue_tracker),
                         description = null,
                         icon = Icons.AutoMirrored.Outlined.OpenInNew,
-                        onClick = { uriHandler.openUri("https://github.com/hamzabellouch/links/issues") },
+                        onClick = { uriHandler.openUri(githubIssueUrl) },
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 16.dp, bottom = 14.dp, top = 4.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClick = { showReportDialog = true } // فتح النافذة
+                                )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .padding(horizontal = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = CustomIcons.Report,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = stringResource(R.string.problem_report),
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -920,6 +961,90 @@ fun TroubleShootingPage(onNavigateBack: () -> Unit) {
             text = { Text(text = stringResource(R.string.contact_developer_confirm)) },
         )
     }
+
+    if (showReportDialog) {
+        AlertDialog(
+            onDismissRequest = { showReportDialog = false },
+            icon = {
+                Icon(
+                    imageVector = CustomIcons.Report,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = stringResource(R.string.problem_report),
+                    style = MaterialTheme.typography.headlineSmall,
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // النص الوصفي داخل النافذة
+                    Text(
+                        text = stringResource(R.string.problem_report_dialog_desc),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    
+                    // الزر الذي يفتح رابط نموذج الإبلاغ في المتصفح
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable(
+                                role = Role.Button,
+                                onClick = {
+                                    showReportDialog = false
+                                    uriHandler.openUri(reportProblemFormUrl) // فتح رابط Google Form
+                                }
+                            )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = CustomIcons.Report,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = stringResource(R.string.open_report_form),
+                                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Outlined.OpenInNew,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                OutlinedButtonWithIcon(
+                    icon = Icons.Outlined.Cancel,
+                    text = stringResource(id = R.string.cancel),
+                    onClick = { showReportDialog = false },
+                )
+            }
+        )
+    }
 }
 
 /* ---------------- AboutPage ---------------- */
@@ -959,9 +1084,9 @@ fun AboutPage(
     AppUpdater(isAutoUpdateEnabled = isAutoUpdateEnabled)
 
     val versionName = try {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.0.2-beta"
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.0.3-beta"
     } catch (e: Exception) {
-        "0.0.2-beta"
+        "0.0.3-beta"
     }
     val info = "App version: $versionName\nPackage name: ${context.packageName}\nDevice: Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
     val uriHandler = LocalUriHandler.current
@@ -987,7 +1112,6 @@ fun AboutPage(
                     },
                     navigationIcon = { BackButton { onNavigateBack() } },
                     scrollBehavior = scrollBehavior,
-                    windowInsets = WindowInsets(0.dp),
                     actions = {
                         // كبسولة "What's New / ما الجديد" في أعلى الصفحة
                         if (!isWhatsNewDismissed) {
@@ -1095,7 +1219,7 @@ fun AboutPage(
                         description = stringResource(R.string.github_stars_desc),
                         icon = Icons.Outlined.StarBorder,
                     ) {
-                        openUrl("https://github.com/hamzabellouch/links")
+                        openUrl("https://github.com/hamzabellouch/ren-browser")
                     }
                 }
                 // 5. Website
@@ -1176,71 +1300,6 @@ fun AboutPage(
 
 /* ---------------- CreditsPage ---------------- */
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun CreditsPage(onNavigateBack: () -> Unit) {
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-
-    val creditsList = remember {
-        listOf(
-            Triple("Android Jetpack", "Apache License, Version 2.0", "https://github.com/androidx/androidx"),
-            Triple("Kotlin", "Apache License, Version 2.0", "https://kotlinlang.org/"),
-            Triple("Material Design 3", "Apache License, Version 2.0", "https://m3.material.io/"),
-            Triple("Material Icons", "Apache License, Version 2.0", "https://fonts.google.com/icons"),
-            Triple("Accompanist", "Apache License, Version 2.0", "https://github.com/google/accompanist"),
-            Triple("ZXing", "Apache License, Version 2.0", "https://github.com/zxing/zxing"),
-            Triple("App icon by Icons8", "Universal Multimedia Licensing Agreement for Icons8", "https://icons8.com/"),
-        )
-    }
-
-    val uriHandler = LocalUriHandler.current
-
-    Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(id = R.string.credits),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                navigationIcon = { BackButton { onNavigateBack() } },
-            )
-        },
-        content = { padding ->
-            LazyColumn(modifier = Modifier.padding(padding)) {
-                item {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 12.dp)
-                            .clip(MaterialTheme.shapes.large)
-                            .clickable {}
-                            .clearAndSetSemantics {},
-                        color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    ) {
-                        val painter = rememberVectorPainter(image = DynamicColorImageVectors.coder())
-                        Image(
-                            painter = painter,
-                            contentDescription = null,
-                            modifier = Modifier.padding(horizontal = 72.dp, vertical = 48.dp),
-                        )
-                    }
-                }
-                items(creditsList) { item ->
-                    CreditItem(title = item.first, license = item.second) {
-                        uriHandler.openUri(item.third)
-                    }
-                }
-            }
-        },
-    )
-}
 
 /* ---------------- المكونات المساعدة ---------------- */
 
@@ -1616,6 +1675,8 @@ fun MenuHost(
                                 MenuSubScreen.About -> navigateTo("about")
                                 MenuSubScreen.Troubleshooting -> navigateTo("troubleshooting")
                                 MenuSubScreen.Sponsor -> navigateTo("sponsor")
+                                MenuSubScreen.Update -> navigateTo("update")
+                                MenuSubScreen.Credits -> navigateTo("credits")
                                 else -> onNavigateSubScreen?.invoke(subScreen)
                             }
                         }
@@ -1768,7 +1829,13 @@ fun MenuHost(
                 "about" -> {
                     AboutPage(
                         onNavigateBack = navigateBack,
-                        onNavigateToCreditsPage = { navigateTo("credits") }
+                        onNavigateToCreditsPage = { navigateTo("credits") },
+                        onNavigateToUpdatePage = { navigateTo("update") }
+                    )
+                }
+                "update" -> {
+                    UpdatePage(
+                        onNavigateBack = navigateBack
                     )
                 }
                 "credits" -> {
@@ -1784,6 +1851,8 @@ fun MenuHost(
                                 MenuSubScreen.About -> navigateTo("about")
                                 MenuSubScreen.Troubleshooting -> navigateTo("troubleshooting")
                                 MenuSubScreen.Sponsor -> navigateTo("sponsor")
+                                MenuSubScreen.Update -> navigateTo("update")
+                                MenuSubScreen.Credits -> navigateTo("credits")
                                 else -> onNavigateSubScreen?.invoke(subScreen)
                             }
                         }

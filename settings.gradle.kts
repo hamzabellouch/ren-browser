@@ -5,8 +5,7 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }
-        maven { url = uri("https://raw.githubusercontent.com/guardianproject/gpmaven/master") }
     }
 }
 rootProject.name = "RenBrowser"
-include(":app")
+include(":app", ":ren-tor")
